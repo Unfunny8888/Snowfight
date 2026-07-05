@@ -29,6 +29,12 @@ final class KidNode: SKNode {
     private let selectionRing: SKShapeNode
     private var hpPips: [SKShapeNode] = []
     private var isBobbing = false
+    private var strideDistance: CGFloat = 0
+
+    private static let footprintTexture = PixelArt.circleTexture(
+        diameter: 7,
+        color: PixelArt.snowShadow.withAlphaComponent(0.55)
+    )
 
     private var idleTexture: SKTexture {
         team == .player ? PixelArt.redKidIdle : PixelArt.greenKidIdle
@@ -228,13 +234,72 @@ final class KidNode: SKNode {
                 moveTarget = nil
                 setBobbing(false)
             } else {
-                position = position + delta.normalized * min(moveSpeed * dt, dist)
+                let step = min(moveSpeed * dt, dist)
+                position = position + delta.normalized * step
                 face(toward: target)
                 setBobbing(true)
+                strideDistance += step
+                if strideDistance > 26 {
+                    strideDistance = 0
+                    stampFootprint()
+                }
             }
         } else {
             setBobbing(false)
         }
+    }
+
+    /// Leaves a small fading footprint in the snow behind a walking kid.
+    private func stampFootprint() {
+        guard let parent else { return }
+        let footprint = SKSpriteNode(texture: KidNode.footprintTexture)
+        footprint.position = position + CGPoint(x: CGFloat.random(in: -5...5), y: 0)
+        footprint.yScale = 0.55
+        footprint.alpha = 0.5
+        footprint.zPosition = -60
+        parent.addChild(footprint)
+        footprint.run(.sequence([
+            .wait(forDuration: 2.0),
+            .fadeOut(withDuration: 1.2),
+            .removeFromParent(),
+        ]))
+    }
+
+    /// Fully restores the kid for a fresh versus round.
+    func resetForRound(at point: CGPoint) {
+        isAlive = true
+        hp = maxHP
+        knockdownTimer = 0
+        throwCooldown = 0
+        moveTarget = nil
+        position = point
+        sprite.removeAllActions()
+        sprite.zRotation = 0
+        sprite.alpha = 1
+        sprite.position = .zero
+        sprite.texture = idleTexture
+        isBobbing = false
+        childNode(withName: "burialMound")?.removeFromParent()
+        refreshHPPips()
+    }
+
+    /// Guest-side mirror: force display state straight from a network
+    /// snapshot. No simulation, just visuals.
+    func applyRemote(hp newHP: Int, alive: Bool, down: Bool, faceLeft: Bool) {
+        let base = GameConfig.kidPixelScale
+        sprite.xScale = faceLeft ? -base : base
+        if newHP != hp {
+            hp = newHP
+            refreshHPPips()
+        }
+        if alive != isAlive {
+            isAlive = alive
+            refreshHPPips()
+            if alive { childNode(withName: "burialMound")?.removeFromParent() }
+        }
+        let flattened = !alive || down
+        sprite.zRotation = flattened ? (sprite.xScale < 0 ? .pi / 2 : -.pi / 2) : 0
+        sprite.alpha = alive ? 1 : 0.45
     }
 
     var canAct: Bool { isAlive && knockdownTimer <= 0 }

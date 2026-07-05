@@ -4,6 +4,10 @@ import SpriteKit
 /// along the ground line from start to target while a parabolic "height"
 /// offsets the visible sprite, with a shadow tracking the ground point.
 final class Snowball {
+    private static var nextID: UInt32 = 1
+
+    /// Stable identifier so network snapshots can track this ball on the guest.
+    let id: UInt32
     let node: SKSpriteNode
     let shadow: SKSpriteNode
     let team: KidNode.Team
@@ -27,6 +31,8 @@ final class Snowball {
     )
 
     init(team: KidNode.Team, from start: CGPoint, to target: CGPoint, speed: CGFloat, damage: Int) {
+        self.id = Snowball.nextID
+        Snowball.nextID &+= 1
         self.team = team
         self.start = start
         self.target = target

@@ -1,11 +1,14 @@
 import SpriteKit
 import UIKit
 
-/// Title screen: falling snow, a face-off between the two teams,
-/// high score, and a big play button.
+/// Title screen: falling snow, a face-off between the two teams, high score,
+/// mode buttons (Solo / 2P Same Device / Nearby), and audio toggles.
 final class MenuScene: SKScene {
 
     private var builtSize: CGSize = .zero
+
+    // buttons are matched by name in touchesBegan
+    private var buttonNodes: [String: SKShapeNode] = [:]
 
     override func didMove(to view: SKView) {
         Sound.warmUp()
@@ -13,7 +16,6 @@ final class MenuScene: SKScene {
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
-        // resizeFill can settle the real size after presentation; rebuild once stable
         if builtSize != .zero, size.width > 0, size.height > 0, size != builtSize {
             buildUI()
         }
@@ -21,6 +23,7 @@ final class MenuScene: SKScene {
 
     private func buildUI() {
         removeAllChildren()
+        buttonNodes = [:]
         builtSize = size
         backgroundColor = PixelArt.snowGround
 
@@ -29,62 +32,50 @@ final class MenuScene: SKScene {
         ground.zPosition = -100
         addChild(ground)
 
-        // Title
         let title = SKLabelNode(fontNamed: "Menlo-Bold")
         title.text = "SNOWFIGHT"
         title.fontSize = 46
         title.fontColor = UIColor(red: 0.16, green: 0.28, blue: 0.52, alpha: 1)
-        title.position = CGPoint(x: size.width / 2, y: size.height * 0.74)
+        title.position = CGPoint(x: size.width / 2, y: size.height * 0.82)
         addChild(title)
 
         let subtitle = SKLabelNode(fontNamed: "Menlo-Bold")
         subtitle.text = "❄ THE CLASSIC SNOWBALL BATTLE ❄"
         subtitle.fontSize = 13
         subtitle.fontColor = UIColor(red: 0.35, green: 0.47, blue: 0.66, alpha: 1)
-        subtitle.position = CGPoint(x: size.width / 2, y: size.height * 0.70)
+        subtitle.position = CGPoint(x: size.width / 2, y: size.height * 0.78)
         addChild(subtitle)
 
-        // Face-off vignette: three red kids vs three green kids
+        // Face-off vignette
         let fort = FortNode()
-        fort.position = CGPoint(x: size.width / 2, y: size.height * 0.52)
+        fort.position = CGPoint(x: size.width / 2, y: size.height * 0.635)
         addChild(fort)
-
-        for (i, fx) in [0.22, 0.38, 0.30].enumerated() {
+        for (i, fx) in [0.24, 0.40, 0.32].enumerated() {
             let kid = KidNode(team: .player, hp: 3)
-            kid.position = CGPoint(x: size.width * fx, y: size.height * (0.44 + CGFloat(i) * 0.035))
+            kid.position = CGPoint(x: size.width * fx, y: size.height * (0.57 + CGFloat(i) * 0.03))
             kid.face(toward: CGPoint(x: size.width, y: kid.position.y))
             addChild(kid)
             bounce(kid.sprite, delay: Double(i) * 0.2)
         }
-        for (i, fx) in [0.78, 0.62, 0.70].enumerated() {
+        for (i, fx) in [0.76, 0.60, 0.68].enumerated() {
             let kid = KidNode(team: .enemy, hp: 2)
-            kid.position = CGPoint(x: size.width * fx, y: size.height * (0.44 + CGFloat(i) * 0.035))
+            kid.position = CGPoint(x: size.width * fx, y: size.height * (0.57 + CGFloat(i) * 0.03))
             kid.face(toward: CGPoint(x: 0, y: kid.position.y))
             addChild(kid)
             bounce(kid.sprite, delay: 0.1 + Double(i) * 0.2)
         }
 
-        // Play button
-        let button = SKShapeNode(rectOf: CGSize(width: 220, height: 62), cornerRadius: 14)
-        button.fillColor = UIColor(red: 0.85, green: 0.25, blue: 0.22, alpha: 1)
-        button.strokeColor = .white
-        button.lineWidth = 3
-        button.position = CGPoint(x: size.width / 2, y: size.height * 0.28)
-        button.name = "play"
-        addChild(button)
-
-        let playLabel = SKLabelNode(fontNamed: "Menlo-Bold")
-        playLabel.text = "PLAY"
-        playLabel.fontSize = 26
-        playLabel.fontColor = .white
-        playLabel.verticalAlignmentMode = .center
-        playLabel.name = "play"
-        button.addChild(playLabel)
-
-        button.run(.repeatForever(.sequence([
-            .scale(to: 1.05, duration: 0.6),
-            .scale(to: 1.0, duration: 0.6),
-        ])))
+        // Mode buttons
+        let cx = size.width / 2
+        makeButton(name: "solo", text: "PLAY SOLO",
+                   color: UIColor(red: 0.85, green: 0.25, blue: 0.22, alpha: 1),
+                   at: CGPoint(x: cx, y: size.height * 0.44), width: 240, height: 58, fontSize: 24, pulse: true)
+        makeButton(name: "local", text: "2 PLAYERS · 1 DEVICE",
+                   color: UIColor(red: 0.24, green: 0.55, blue: 0.32, alpha: 1),
+                   at: CGPoint(x: cx, y: size.height * 0.365), width: 260, height: 48, fontSize: 16)
+        makeButton(name: "online", text: "NEARBY · 2 DEVICES",
+                   color: UIColor(red: 0.22, green: 0.42, blue: 0.68, alpha: 1),
+                   at: CGPoint(x: cx, y: size.height * 0.30), width: 260, height: 48, fontSize: 16)
 
         // Records
         let defaults = UserDefaults.standard
@@ -95,26 +86,82 @@ final class MenuScene: SKScene {
             record.text = "BEST \(highScore)  •  LEVEL \(max(bestLevel, 1))"
             record.fontSize = 14
             record.fontColor = UIColor(red: 0.35, green: 0.47, blue: 0.66, alpha: 1)
-            record.position = CGPoint(x: size.width / 2, y: size.height * 0.20)
+            record.position = CGPoint(x: cx, y: size.height * 0.235)
             addChild(record)
         }
 
         // How to play
         let lines = [
-            "DRAG from a red kid to throw",
-            "TAP the snow to move",
+            "DRAG from a kid to throw  •  TAP snow to move",
             "Use forts for cover — grab power-ups!",
         ]
         for (i, line) in lines.enumerated() {
             let label = SKLabelNode(fontNamed: "Menlo-Bold")
             label.text = line
-            label.fontSize = 12
+            label.fontSize = 11
             label.fontColor = UIColor(red: 0.42, green: 0.52, blue: 0.68, alpha: 1)
-            label.position = CGPoint(x: size.width / 2, y: size.height * 0.13 - CGFloat(i) * 18)
+            label.position = CGPoint(x: cx, y: size.height * 0.175 - CGFloat(i) * 16)
             addChild(label)
         }
 
+        buildAudioToggles()
+
         addChild(PixelArt.snowfallEmitter(sceneSize: size, birthRate: 14))
+    }
+
+    private func makeButton(name: String, text: String, color: UIColor, at position: CGPoint,
+                            width: CGFloat, height: CGFloat, fontSize: CGFloat, pulse: Bool = false) {
+        let button = SKShapeNode(rectOf: CGSize(width: width, height: height), cornerRadius: 13)
+        button.fillColor = color
+        button.strokeColor = .white
+        button.lineWidth = 2.5
+        button.position = position
+        button.name = name
+        addChild(button)
+        buttonNodes[name] = button
+
+        let label = SKLabelNode(fontNamed: "Menlo-Bold")
+        label.text = text
+        label.fontSize = fontSize
+        label.fontColor = .white
+        label.verticalAlignmentMode = .center
+        label.name = name
+        button.addChild(label)
+
+        if pulse {
+            button.run(.repeatForever(.sequence([
+                .scale(to: 1.05, duration: 0.6),
+                .scale(to: 1.0, duration: 0.6),
+            ])))
+        }
+    }
+
+    private func buildAudioToggles() {
+        let y = size.height * 0.075
+        makeToggle(name: "music", label: "MUSIC", on: Sound.shared.musicEnabled,
+                   at: CGPoint(x: size.width * 0.33, y: y))
+        makeToggle(name: "sfx", label: "SOUND", on: Sound.shared.sfxEnabled,
+                   at: CGPoint(x: size.width * 0.67, y: y))
+    }
+
+    private func makeToggle(name: String, label: String, on: Bool, at position: CGPoint) {
+        let button = SKShapeNode(rectOf: CGSize(width: 118, height: 34), cornerRadius: 10)
+        button.fillColor = on ? UIColor(red: 0.3, green: 0.55, blue: 0.4, alpha: 1)
+                              : UIColor(white: 0.5, alpha: 0.5)
+        button.strokeColor = .white
+        button.lineWidth = 1.5
+        button.position = position
+        button.name = name
+        addChild(button)
+        buttonNodes[name] = button
+
+        let text = SKLabelNode(fontNamed: "Menlo-Bold")
+        text.text = "\(label): \(on ? "ON" : "OFF")"
+        text.fontSize = 12
+        text.fontColor = .white
+        text.verticalAlignmentMode = .center
+        text.name = name
+        button.addChild(text)
     }
 
     private func bounce(_ node: SKNode, delay: TimeInterval) {
@@ -126,16 +173,32 @@ final class MenuScene: SKScene {
         ])))
     }
 
+    private func present(_ scene: SKScene) {
+        scene.scaleMode = scaleMode
+        view?.presentScene(scene, transition: .fade(with: PixelArt.snowGround, duration: 0.5))
+    }
+
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = touches.first else { return }
-        let location = touch.location(in: self)
-        let tapped = nodes(at: location)
-        if tapped.contains(where: { $0.name == "play" }) {
-            Sound.shared.play("click")
-            Haptics.shared.throwBall()
-            let game = GameScene(size: size)
-            game.scaleMode = scaleMode
-            view?.presentScene(game, transition: .fade(with: PixelArt.snowGround, duration: 0.5))
+        let tappedNames = Set(nodes(at: touch.location(in: self)).compactMap { $0.name })
+
+        if tappedNames.contains("solo") {
+            Sound.shared.play("click"); Haptics.shared.throwBall()
+            present(GameScene(size: size, mode: .solo))
+        } else if tappedNames.contains("local") {
+            Sound.shared.play("click"); Haptics.shared.throwBall()
+            present(GameScene(size: size, mode: .localVersus))
+        } else if tappedNames.contains("online") {
+            Sound.shared.play("click"); Haptics.shared.throwBall()
+            present(LobbyScene(size: size))
+        } else if tappedNames.contains("music") {
+            Sound.shared.play("click", volume: 0.5)
+            Sound.shared.musicEnabled.toggle()
+            buildUI()
+        } else if tappedNames.contains("sfx") {
+            Sound.shared.sfxEnabled.toggle()
+            Sound.shared.play("click", volume: 0.5)
+            buildUI()
         }
     }
 }

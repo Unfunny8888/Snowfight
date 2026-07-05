@@ -52,6 +52,18 @@ final class FortNode: SKNode {
         return dx * dx + dy * dy < 1
     }
 
+    /// Guest-side mirror: adopt the fort HP from a network snapshot.
+    func applyRemote(hp newHP: Int) {
+        guard newHP != hp else { return }
+        hp = newHP
+        let newState = hp <= 0 ? 2 : (hp <= GameConfig.fortHP / 2 ? 1 : 0)
+        if newState != damageState {
+            damageState = newState
+            sprite.texture = FortNode.textures[newState]
+        }
+        sprite.alpha = hp <= 0 ? 0.55 : 1
+    }
+
     func takeHit() {
         guard isStanding else { return }
         hp -= 1

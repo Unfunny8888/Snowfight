@@ -3,7 +3,9 @@ import SpriteKit
 /// Collectible boosts that drop onto the field — one of the additions over
 /// the original game. Walk a kid over one to grab it.
 final class PowerUpNode: SKNode {
-    enum Kind: CaseIterable {
+    private static var nextID: UInt32 = 1
+
+    enum Kind: UInt8, CaseIterable, Codable {
         case megaBall   // bigger snowballs that deal 2 damage
         case cocoa      // +1 HP for the whole team
         case rapidFire  // much faster throw cooldown
@@ -25,10 +27,14 @@ final class PowerUpNode: SKNode {
         }
     }
 
+    /// Stable identifier so network snapshots can track this pickup on the guest.
+    let id: UInt32
     let kind: Kind
     var lifetime: CGFloat = GameConfig.powerUpLifetime
 
     init(kind: Kind) {
+        self.id = PowerUpNode.nextID
+        PowerUpNode.nextID &+= 1
         self.kind = kind
         super.init()
 

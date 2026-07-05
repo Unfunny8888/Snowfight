@@ -51,4 +51,6 @@ enum GameConfig {
 
     static let highScoreKey = "snowfight.highScore"
     static let bestLevelKey = "snowfight.bestLevel"
+    static let sfxEnabledKey = "snowfight.sfxEnabled"
+    static let musicEnabledKey = "snowfight.musicEnabled"
 }

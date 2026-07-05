@@ -1,25 +1,39 @@
 import SpriteKit
 import UIKit
 
-/// The snowball battlefield. Your red team holds the bottom of the field,
-/// waves of green kids attack from the top — just like the classic, plus
-/// levels, power-ups, and score.
+/// The snowball battlefield. In solo mode your red team fights waves of AI
+/// kids across endless levels; in versus modes the green team is a second
+/// human — on the top half of this screen, or on a nearby device (this
+/// scene simulates, the other renders).
 final class GameScene: SKScene {
 
     private enum State {
         case playing
-        case levelBreak
+        case roundBreak
         case gameOver
         case paused
     }
+
+    /// One player's touch context: their drag, their aim arrow, their kid.
+    private final class TeamInput {
+        var activeTouch: UITouch?
+        var aimingKid: KidNode?
+        var aimStart: CGPoint = .zero
+        var selected: KidNode?
+        let arrow = SKShapeNode()
+        let reticle = SKShapeNode(ellipseOf: CGSize(width: 34, height: 16))
+    }
+
+    let mode: GameMode
 
     private var state: State = .playing
     private var level = 1
     private var score = 0 {
         didSet { scoreLabel.text = "SCORE \(score)" }
     }
+    private var roundWins: [KidNode.Team: Int] = [.player: 0, .enemy: 0]
 
-    // Entities
+    // Entities (red = players array, green = enemies array)
     private let world = SKNode()
     private var players: [KidNode] = []
     private var enemies: [KidNode] = []
@@ -28,12 +42,7 @@ final class GameScene: SKScene {
     private var powerUps: [PowerUpNode] = []
 
     // Input
-    private var selectedKid: KidNode?
-    private var aimingKid: KidNode?
-    private var aimStart: CGPoint = .zero
-    private var activeTouch: UITouch?
-    private var aimArrow = SKShapeNode()
-    private var aimReticle = SKShapeNode(ellipseOf: CGSize(width: 34, height: 16))
+    private var inputs: [KidNode.Team: TeamInput] = [:]
 
     // HUD
     private let scoreLabel = SKLabelNode(fontNamed: "Menlo-Bold")
@@ -45,11 +54,24 @@ final class GameScene: SKScene {
     private let hintLabel = SKLabelNode(fontNamed: "Menlo-Bold")
     private let pauseOverlay = SKNode()
 
-    // Timers
+    // Timers (power-ups are per-team so both sides can use them in versus)
     private var lastUpdateTime: TimeInterval = 0
     private var powerUpTimer: CGFloat = 13
-    private var megaBallTimer: CGFloat = 0
-    private var rapidFireTimer: CGFloat = 0
+    private var megaTimers: [KidNode.Team: CGFloat] = [.player: 0, .enemy: 0]
+    private var rapidTimers: [KidNode.Team: CGFloat] = [.player: 0, .enemy: 0]
+
+    // Networking (hostOnline only)
+    private var netEvents: [NetEvent] = []
+    private var snapshotClock: CGFloat = 0
+
+    // MARK: - Init
+
+    init(size: CGSize, mode: GameMode) {
+        self.mode = mode
+        super.init(size: size)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
 
     // MARK: - Setup
 
@@ -61,9 +83,30 @@ final class GameScene: SKScene {
         buildField()
         buildAimHelpers()
         buildHUD()
-        buildSnowfall()
-        startLevel(1)
-        showHint("Drag from a red kid to throw  •  Tap snow to walk")
+        addChild(PixelArt.snowfallEmitter(sceneSize: size, birthRate: 8))
+
+        if mode.isOnline {
+            MultipeerSession.shared.onMessage = { [weak self] message in
+                if case .input(let command) = message {
+                    self?.applyRemoteInput(command)
+                }
+            }
+            MultipeerSession.shared.onDisconnected = { [weak self] in
+                self?.peerLeft()
+            }
+        }
+
+        switch mode {
+        case .solo:
+            startLevel(1)
+            showHint("Drag from a red kid to throw  •  Tap snow to walk")
+        case .localVersus:
+            startRound()
+            showHint("Each player owns one half — drag from your kids to throw")
+        case .hostOnline:
+            startRound()
+            showHint("Nearby match — you are the RED team")
+        }
     }
 
     private func buildField() {
@@ -73,7 +116,6 @@ final class GameScene: SKScene {
         ground.zPosition = -100
         world.addChild(ground)
 
-        // Two forts per side, mirrored like the original battlefield.
         let fortSpots: [CGPoint] = [
             CGPoint(x: size.width * 0.27, y: size.height * 0.30),
             CGPoint(x: size.width * 0.73, y: size.height * 0.30),
@@ -90,50 +132,64 @@ final class GameScene: SKScene {
     }
 
     private func buildAimHelpers() {
-        aimArrow.strokeColor = UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 0.9)
-        aimArrow.lineWidth = 3
-        aimArrow.lineCap = .round
-        aimArrow.zPosition = 300
-        aimArrow.isHidden = true
-        world.addChild(aimArrow)
+        let redInput = TeamInput()
+        styleAim(redInput, color: UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 0.9))
+        inputs[.player] = redInput
 
-        aimReticle.strokeColor = UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 0.9)
-        aimReticle.fillColor = UIColor(red: 0.95, green: 0.55, blue: 0.15, alpha: 0.15)
-        aimReticle.lineWidth = 2
-        aimReticle.zPosition = 300
-        aimReticle.isHidden = true
-        world.addChild(aimReticle)
+        if mode == .localVersus {
+            let greenInput = TeamInput()
+            styleAim(greenInput, color: UIColor(red: 0.30, green: 0.75, blue: 0.30, alpha: 0.9))
+            inputs[.enemy] = greenInput
+        }
+    }
+
+    private func styleAim(_ input: TeamInput, color: UIColor) {
+        input.arrow.strokeColor = color
+        input.arrow.lineWidth = 3
+        input.arrow.lineCap = .round
+        input.arrow.zPosition = 300
+        input.arrow.isHidden = true
+        world.addChild(input.arrow)
+
+        input.reticle.strokeColor = color
+        input.reticle.fillColor = color.withAlphaComponent(0.15)
+        input.reticle.lineWidth = 2
+        input.reticle.zPosition = 300
+        input.reticle.isHidden = true
+        world.addChild(input.reticle)
     }
 
     private func buildHUD() {
+        let ink = UIColor(red: 0.25, green: 0.35, blue: 0.55, alpha: 1)
         let topY = size.height - 58
 
         levelLabel.fontSize = 15
-        levelLabel.fontColor = UIColor(red: 0.25, green: 0.35, blue: 0.55, alpha: 1)
+        levelLabel.fontColor = ink
         levelLabel.horizontalAlignmentMode = .left
         levelLabel.position = CGPoint(x: 18, y: topY)
         levelLabel.zPosition = 1000
         addChild(levelLabel)
 
         scoreLabel.fontSize = 15
-        scoreLabel.fontColor = UIColor(red: 0.25, green: 0.35, blue: 0.55, alpha: 1)
+        scoreLabel.fontColor = ink
         scoreLabel.horizontalAlignmentMode = .left
         scoreLabel.position = CGPoint(x: 18, y: topY - 22)
         scoreLabel.zPosition = 1000
         scoreLabel.text = "SCORE 0"
+        scoreLabel.isHidden = mode.isVersus
         addChild(scoreLabel)
 
         pauseButton.text = "II"
         pauseButton.fontSize = 22
-        pauseButton.fontColor = UIColor(red: 0.25, green: 0.35, blue: 0.55, alpha: 1)
+        pauseButton.fontColor = ink
         pauseButton.horizontalAlignmentMode = .right
         pauseButton.verticalAlignmentMode = .top
         pauseButton.position = CGPoint(x: size.width - 20, y: size.height - 50)
         pauseButton.zPosition = 1000
         pauseButton.name = "pause"
+        pauseButton.isHidden = mode.isOnline // pausing would freeze the other device's world
         addChild(pauseButton)
 
-        // Center banner for level-clear / game-over messages.
         let bannerBack = SKShapeNode(rectOf: CGSize(width: size.width * 0.86, height: 130), cornerRadius: 16)
         bannerBack.fillColor = UIColor(red: 0.12, green: 0.18, blue: 0.32, alpha: 0.88)
         bannerBack.strokeColor = UIColor.white.withAlphaComponent(0.6)
@@ -162,12 +218,12 @@ final class GameScene: SKScene {
         addChild(hintLabel)
 
         buildPauseOverlay()
+        refreshVersusLabel()
     }
 
     private func buildPauseOverlay() {
         let dim = SKSpriteNode(color: UIColor.black.withAlphaComponent(0.45), size: size)
         dim.anchorPoint = .zero
-        dim.position = .zero
         pauseOverlay.addChild(dim)
 
         let title = SKLabelNode(fontNamed: "Menlo-Bold")
@@ -189,10 +245,6 @@ final class GameScene: SKScene {
         addChild(pauseOverlay)
     }
 
-    private func buildSnowfall() {
-        addChild(PixelArt.snowfallEmitter(sceneSize: size, birthRate: 8))
-    }
-
     private func showHint(_ text: String, holdFor: TimeInterval = 6, fade: TimeInterval = 1) {
         hintLabel.text = text
         hintLabel.alpha = 1
@@ -200,58 +252,86 @@ final class GameScene: SKScene {
         hintLabel.run(.sequence([.wait(forDuration: holdFor), .fadeOut(withDuration: fade)]))
     }
 
+    private func refreshVersusLabel() {
+        if mode.isVersus {
+            levelLabel.text = "RED \(roundWins[.player] ?? 0)  —  \(roundWins[.enemy] ?? 0) GRN"
+        }
+    }
+
     /// Lower on screen = closer to camera = drawn on top.
     private func zForGround(y: CGFloat) -> CGFloat {
         (size.height - y) / max(size.height, 1) * 100
     }
 
-    // MARK: - Level flow
+    private func shakeWorld() {
+        world.run(.sequence([
+            .moveBy(x: 5, y: 3, duration: 0.04),
+            .moveBy(x: -9, y: -6, duration: 0.05),
+            .moveBy(x: 6, y: 4, duration: 0.05),
+            .moveBy(x: -2, y: -1, duration: 0.04),
+        ]))
+    }
+
+    // MARK: - Spawn positions
+
+    private var redSpawns: [CGPoint] {
+        [0.25, 0.5, 0.75].map { CGPoint(x: size.width * $0, y: size.height * 0.16) }
+    }
+
+    private var greenSpawns: [CGPoint] {
+        [0.25, 0.5, 0.75].map { CGPoint(x: size.width * $0, y: size.height * 0.84) }
+    }
+
+    private func clearFieldObjects() {
+        for ball in snowballs { ball.removeFromScene() }
+        snowballs = []
+        for powerUp in powerUps { powerUp.removeFromParent() }
+        powerUps = []
+        for fort in forts { fort.reset() }
+        powerUpTimer = CGFloat.random(in: GameConfig.powerUpInterval)
+        megaTimers = [.player: 0, .enemy: 0]
+        rapidTimers = [.player: 0, .enemy: 0]
+        resetInputs()
+    }
+
+    private func resetInputs() {
+        for input in inputs.values {
+            input.activeTouch = nil
+            input.aimingKid = nil
+            input.arrow.isHidden = true
+            input.reticle.isHidden = true
+        }
+    }
+
+    // MARK: - Solo level flow
 
     private func startLevel(_ newLevel: Int) {
         level = newLevel
         levelLabel.text = "LEVEL \(level)"
         state = .playing
         banner.isHidden = true
-
-        // drop any drag that was held across the transition
-        activeTouch = nil
-        aimingKid = nil
-        aimArrow.isHidden = true
-        aimReticle.isHidden = true
-
-        for ball in snowballs { ball.removeFromScene() }
-        snowballs = []
-        for powerUp in powerUps { powerUp.removeFromParent() }
-        powerUps = []
-        powerUpTimer = CGFloat.random(in: GameConfig.powerUpInterval)
-        megaBallTimer = 0
-        rapidFireTimer = 0
-
-        for fort in forts { fort.reset() }
+        clearFieldObjects()
 
         if players.isEmpty {
-            let xs: [CGFloat] = [0.25, 0.5, 0.75]
-            for fx in xs {
+            for spawn in redSpawns {
                 let kid = KidNode(team: .player, hp: GameConfig.maxHP)
-                kid.position = CGPoint(x: size.width * fx, y: size.height * 0.16)
+                kid.position = spawn
                 world.addChild(kid)
                 players.append(kid)
             }
-            selectKid(players[1])
+            selectKid(players[1], team: .player)
         } else {
             for (i, kid) in players.enumerated() {
                 kid.reviveForNextLevel()
-                kid.moveTarget = CGPoint(
-                    x: size.width * [0.25, 0.5, 0.75][i % 3],
-                    y: size.height * 0.16
-                )
+                kid.moveTarget = redSpawns[i % redSpawns.count]
             }
-            if selectedKid == nil || selectedKid?.isAlive != true {
-                selectKid(players.first(where: { $0.isAlive }))
+            let input = inputs[.player]
+            if input?.selected == nil || input?.selected?.isAlive != true {
+                selectKid(players.first(where: { $0.isAlive }), team: .player)
             }
         }
 
-        // Enemies march in from beyond the top edge.
+        // AI enemies march in from beyond the top edge.
         for enemy in enemies { enemy.removeFromParent() }
         enemies = []
         let count = GameConfig.enemyCount(level: level)
@@ -275,26 +355,17 @@ final class GameScene: SKScene {
     }
 
     private func levelCleared() {
-        state = .levelBreak
+        state = .roundBreak
         clearFlyingSnowballs()
-        let survivors = players.filter { $0.isAlive }
-        let bonus = GameConfig.scoreLevelClear + survivors.reduce(0) { $0 + $1.hp * GameConfig.scoreSurvivorBonus }
+        let bonus = GameConfig.scoreLevelClear + players.filter { $0.isAlive }
+            .reduce(0) { $0 + $1.hp * GameConfig.scoreSurvivorBonus }
         score += bonus
-        Sound.shared.play("levelup")
+        Sound.shared.play("cheer")
         Haptics.shared.success()
-        bannerTitle.text = "LEVEL \(level) CLEAR!"
-        bannerSubtitle.text = "+\(bonus) BONUS  •  TAP FOR LEVEL \(level + 1)"
-        banner.isHidden = false
-        banner.setScale(0.7)
-        banner.run(.scale(to: 1, duration: 0.25))
+        showBanner("LEVEL \(level) CLEAR!", subtitle: "+\(bonus) BONUS  •  TAP FOR LEVEL \(level + 1)")
     }
 
-    private func clearFlyingSnowballs() {
-        for ball in snowballs { ball.removeFromScene() }
-        snowballs = []
-    }
-
-    private func gameOver() {
+    private func soloGameOver() {
         state = .gameOver
         clearFlyingSnowballs()
         Sound.shared.play("gameover")
@@ -305,11 +376,73 @@ final class GameScene: SKScene {
         defaults.set(best, forKey: GameConfig.highScoreKey)
         defaults.set(max(level, defaults.integer(forKey: GameConfig.bestLevelKey)), forKey: GameConfig.bestLevelKey)
 
-        bannerTitle.text = "SNOWED UNDER!"
-        bannerSubtitle.text = "SCORE \(score)  •  BEST \(best)  •  TAP FOR MENU"
+        showBanner("SNOWED UNDER!", subtitle: "SCORE \(score)  •  BEST \(best)  •  TAP FOR MENU")
+    }
+
+    // MARK: - Versus round flow
+
+    private func startRound() {
+        state = .playing
+        banner.isHidden = true
+        clearFieldObjects()
+        refreshVersusLabel()
+
+        if players.isEmpty {
+            for spawn in redSpawns {
+                let kid = KidNode(team: .player, hp: GameConfig.maxHP)
+                kid.position = spawn
+                world.addChild(kid)
+                players.append(kid)
+            }
+            for spawn in greenSpawns {
+                let kid = KidNode(team: .enemy, hp: GameConfig.maxHP)
+                kid.moveSpeed = GameConfig.playerMoveSpeed
+                kid.position = spawn
+                world.addChild(kid)
+                enemies.append(kid)
+            }
+            selectKid(players[1], team: .player)
+            if mode == .localVersus { selectKid(enemies[1], team: .enemy) }
+        } else {
+            for (i, kid) in players.enumerated() { kid.resetForRound(at: redSpawns[i % 3]) }
+            for (i, kid) in enemies.enumerated() { kid.resetForRound(at: greenSpawns[i % 3]) }
+            selectKid(players[1], team: .player)
+            if mode == .localVersus { selectKid(enemies[1], team: .enemy) }
+        }
+        pushEvent(.roundStart)
+    }
+
+    private func roundWon(by team: KidNode.Team) {
+        roundWins[team, default: 0] += 1
+        refreshVersusLabel()
+        clearFlyingSnowballs()
+        let wins = roundWins[team] ?? 0
+        let teamName = team == .player ? "RED" : "GREEN"
+        Sound.shared.play("cheer")
+        Haptics.shared.success()
+
+        if wins >= GameMode.roundsToWin {
+            state = .gameOver
+            pushEvent(.matchEnd(greenWon: team == .enemy))
+            showBanner("\(teamName) WINS THE MATCH!", subtitle: "TAP FOR MENU")
+        } else {
+            state = .roundBreak
+            pushEvent(.roundEnd(greenWon: team == .enemy))
+            showBanner("\(teamName) TAKES THE ROUND!", subtitle: "FIRST TO \(GameMode.roundsToWin)  •  TAP TO CONTINUE")
+        }
+    }
+
+    private func showBanner(_ title: String, subtitle: String) {
+        bannerTitle.text = title
+        bannerSubtitle.text = subtitle
         banner.isHidden = false
         banner.setScale(0.7)
         banner.run(.scale(to: 1, duration: 0.25))
+    }
+
+    private func clearFlyingSnowballs() {
+        for ball in snowballs { ball.removeFromScene() }
+        snowballs = []
     }
 
     private func togglePause() {
@@ -326,19 +459,31 @@ final class GameScene: SKScene {
         }
     }
 
-    // MARK: - Selection & throwing
+    private func exitToMenu() {
+        if mode.isOnline { MultipeerSession.shared.leaveMatch() }
+        let menu = MenuScene(size: size)
+        menu.scaleMode = scaleMode
+        view?.presentScene(menu, transition: .fade(with: PixelArt.snowGround, duration: 0.6))
+    }
 
-    private func selectKid(_ kid: KidNode?) {
-        selectedKid?.setSelected(false)
-        selectedKid = kid
+    // MARK: - Teams & selection
+
+    private func kids(of team: KidNode.Team) -> [KidNode] {
+        team == .player ? players : enemies
+    }
+
+    private func selectKid(_ kid: KidNode?, team: KidNode.Team) {
+        guard let input = inputs[team] else { return }
+        input.selected?.setSelected(false)
+        input.selected = kid
         kid?.setSelected(true)
     }
 
-    /// Nearest living kid within grab range of the touch, if any.
-    private func playerKid(near point: CGPoint) -> KidNode? {
+    /// Nearest living kid of a team within grab range of the touch.
+    private func kid(of team: KidNode.Team, near point: CGPoint) -> KidNode? {
         var best: KidNode?
         var bestDistance: CGFloat = 52
-        for kid in players where kid.isAlive {
+        for kid in kids(of: team) where kid.isAlive {
             let distance = kid.position.distance(to: point)
             if distance < bestDistance {
                 best = kid
@@ -355,19 +500,32 @@ final class GameScene: SKScene {
         )
     }
 
+    /// Where a team's kids are allowed to walk.
+    private func walkClamped(_ point: CGPoint, team: KidNode.Team) -> CGPoint {
+        let yRange: ClosedRange<CGFloat> = team == .player
+            ? (size.height * 0.08)...(size.height * 0.52)
+            : (size.height * 0.48)...(size.height * 0.92)
+        return CGPoint(
+            x: clamp(point.x, 24, size.width - 24),
+            y: clamp(point.y, yRange.lowerBound, yRange.upperBound)
+        )
+    }
+
+    // MARK: - Throwing
+
     private func throwSnowball(from kid: KidNode, to rawTarget: CGPoint) {
         let target = fieldClamped(rawTarget)
         kid.face(toward: target)
         kid.playThrowAnimation()
         Sound.shared.play("throw", volume: 0.6)
-        if kid.team == .player { Haptics.shared.throwBall() }
+        if kid.team == .player || mode == .localVersus { Haptics.shared.throwBall() }
 
-        let isMega = kid.team == .player && megaBallTimer > 0
+        let isMega = (megaTimers[kid.team] ?? 0) > 0
         let ball = Snowball(
             team: kid.team,
             from: kid.position + CGPoint(x: 0, y: 6),
             to: target,
-            speed: kid.team == .player ? GameConfig.playerThrowSpeed : GameConfig.enemyThrowSpeed,
+            speed: (mode == .solo && kid.team == .enemy) ? GameConfig.enemyThrowSpeed : GameConfig.playerThrowSpeed,
             damage: isMega ? 2 : 1
         )
         // a ball lobbed from behind (or on) a fort arcs over it instead of chipping it
@@ -375,137 +533,177 @@ final class GameScene: SKScene {
         world.addChild(ball.node)
         world.addChild(ball.shadow)
         snowballs.append(ball)
+
+        if mode.isOnline, let index = kids(of: kid.team).firstIndex(where: { $0 === kid }) {
+            pushEvent(.threw(green: kid.team == .enemy, kid: Int8(index)))
+        }
     }
 
     // MARK: - Touch handling
 
-    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = touches.first else { return }
-        let location = touch.location(in: self)
+    private func teamForTouch(at location: CGPoint) -> KidNode.Team {
+        guard mode == .localVersus else { return .player }
+        return location.y < size.height * 0.5 ? .player : .enemy
+    }
 
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         switch state {
         case .paused:
             togglePause()
             return
-        case .levelBreak:
+        case .roundBreak:
             Sound.shared.play("click", volume: 0.5)
-            startLevel(level + 1)
+            if mode == .solo { startLevel(level + 1) } else { startRound() }
             return
         case .gameOver:
             Sound.shared.play("click", volume: 0.5)
-            let menu = MenuScene(size: size)
-            menu.scaleMode = scaleMode
-            view?.presentScene(menu, transition: .fade(with: PixelArt.snowGround, duration: 0.6))
+            exitToMenu()
             return
         case .playing:
             break
         }
 
-        if pauseButton.frame.insetBy(dx: -18, dy: -18).contains(location) {
-            togglePause()
-            return
-        }
+        for touch in touches {
+            let location = touch.location(in: self)
 
-        guard activeTouch == nil else { return }
-        activeTouch = touch
-        aimStart = location
+            if !pauseButton.isHidden, pauseButton.frame.insetBy(dx: -18, dy: -18).contains(location) {
+                togglePause()
+                return
+            }
 
-        if let kid = playerKid(near: location), kid.canAct {
-            aimingKid = kid
-            selectKid(kid)
-        } else {
-            aimingKid = nil
+            let team = teamForTouch(at: location)
+            guard let input = inputs[team], input.activeTouch == nil else { continue }
+            input.activeTouch = touch
+            input.aimStart = location
+
+            if let kid = kid(of: team, near: location), kid.canAct {
+                input.aimingKid = kid
+                selectKid(kid, team: team)
+            } else {
+                input.aimingKid = nil
+            }
         }
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch) else { return }
-        guard state == .playing, let kid = aimingKid, kid.canAct else {
-            // the aiming kid was knocked down (or the game left play) mid-drag
-            aimArrow.isHidden = true
-            aimReticle.isHidden = true
-            return
-        }
+        guard state == .playing else { return }
+        for touch in touches {
+            guard let input = inputs.values.first(where: { $0.activeTouch === touch }) else { continue }
+            guard let kid = input.aimingKid, kid.canAct else {
+                input.arrow.isHidden = true
+                input.reticle.isHidden = true
+                continue
+            }
 
-        let location = touch.location(in: self)
-        let drag = location - aimStart
-        guard drag.length > 12 else {
-            aimArrow.isHidden = true
-            aimReticle.isHidden = true
-            return
-        }
+            let location = touch.location(in: self)
+            let drag = location - input.aimStart
+            guard drag.length > 12 else {
+                input.arrow.isHidden = true
+                input.reticle.isHidden = true
+                continue
+            }
 
-        let target = fieldClamped(kid.position + drag * GameConfig.dragToRangeFactor)
-        let path = CGMutablePath()
-        path.move(to: kid.position + CGPoint(x: 0, y: 20))
-        path.addLine(to: target)
-        aimArrow.path = path
-        aimArrow.isHidden = false
-        aimReticle.position = target
-        aimReticle.isHidden = false
-        // dim the aim while the kid is still reloading so a blocked shot isn't a surprise
-        let ready = kid.throwCooldown <= 0
-        aimArrow.alpha = ready ? 1 : 0.35
-        aimReticle.alpha = ready ? 1 : 0.35
-        kid.face(toward: target)
+            let target = fieldClamped(kid.position + drag * GameConfig.dragToRangeFactor)
+            let path = CGMutablePath()
+            path.move(to: kid.position + CGPoint(x: 0, y: 20))
+            path.addLine(to: target)
+            input.arrow.path = path
+            input.arrow.isHidden = false
+            input.reticle.position = target
+            input.reticle.isHidden = false
+            let ready = kid.throwCooldown <= 0
+            input.arrow.alpha = ready ? 1 : 0.35
+            input.reticle.alpha = ready ? 1 : 0.35
+            kid.face(toward: target)
+        }
     }
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent?) {
-        guard let touch = activeTouch, touches.contains(touch) else { return }
-        activeTouch = nil
-        aimArrow.isHidden = true
-        aimReticle.isHidden = true
-        guard state == .playing else { aimingKid = nil; return }
-
-        let location = touch.location(in: self)
-        let drag = location - aimStart
-
-        if let kid = aimingKid {
-            aimingKid = nil
-            if drag.length >= GameConfig.minDragToThrow, kid.canAct {
-                if kid.throwCooldown <= 0 {
-                    let target = kid.position + drag * GameConfig.dragToRangeFactor
-                    throwSnowball(from: kid, to: target)
-                    kid.throwCooldown = rapidFireTimer > 0
-                        ? GameConfig.fastThrowCooldown
-                        : GameConfig.playerThrowCooldown
-                } else {
-                    // still reloading — acknowledge the input instead of silence
-                    Sound.shared.play("click", volume: 0.3)
-                }
+        for touch in touches {
+            guard let (team, input) = inputs.first(where: { $0.value.activeTouch === touch }) else { continue }
+            input.activeTouch = nil
+            input.arrow.isHidden = true
+            input.reticle.isHidden = true
+            guard state == .playing else {
+                input.aimingKid = nil
+                continue
             }
-            return
-        }
 
-        // Ground tap: send the selected kid there (player half of the field only).
-        if drag.length < 24, let kid = selectedKid, kid.canAct {
-            let destination = CGPoint(
-                x: clamp(location.x, 24, size.width - 24),
-                y: clamp(location.y, size.height * 0.08, size.height * 0.52)
-            )
-            kid.moveTarget = destination
-            Sound.shared.play("click", volume: 0.3)
+            let location = touch.location(in: self)
+            let drag = location - input.aimStart
 
-            let marker = SKShapeNode(ellipseOf: CGSize(width: 26, height: 12))
-            marker.strokeColor = UIColor(red: 0.4, green: 0.55, blue: 0.75, alpha: 0.8)
-            marker.lineWidth = 2
-            marker.position = destination
-            marker.zPosition = 250
-            world.addChild(marker)
-            marker.run(.sequence([
-                .group([.scale(to: 0.4, duration: 0.4), .fadeOut(withDuration: 0.4)]),
-                .removeFromParent(),
-            ]))
+            if let kid = input.aimingKid {
+                input.aimingKid = nil
+                if drag.length >= GameConfig.minDragToThrow, kid.canAct {
+                    if kid.throwCooldown <= 0 {
+                        throwSnowball(from: kid, to: kid.position + drag * GameConfig.dragToRangeFactor)
+                        kid.throwCooldown = (rapidTimers[team] ?? 0) > 0
+                            ? GameConfig.fastThrowCooldown
+                            : GameConfig.playerThrowCooldown
+                    } else {
+                        Sound.shared.play("click", volume: 0.3)
+                    }
+                }
+                continue
+            }
+
+            // Ground tap: send the selected kid there.
+            if drag.length < 24, let kid = input.selected, kid.canAct {
+                let destination = walkClamped(location, team: team)
+                kid.moveTarget = destination
+                Sound.shared.play("click", volume: 0.3)
+
+                let marker = SKShapeNode(ellipseOf: CGSize(width: 26, height: 12))
+                marker.strokeColor = UIColor(red: 0.4, green: 0.55, blue: 0.75, alpha: 0.8)
+                marker.lineWidth = 2
+                marker.position = destination
+                marker.zPosition = 250
+                world.addChild(marker)
+                marker.run(.sequence([
+                    .group([.scale(to: 0.4, duration: 0.4), .fadeOut(withDuration: 0.4)]),
+                    .removeFromParent(),
+                ]))
+            }
         }
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
-        if let touch = activeTouch, touches.contains(touch) {
-            activeTouch = nil
-            aimingKid = nil
-            aimArrow.isHidden = true
-            aimReticle.isHidden = true
+        for touch in touches {
+            guard let input = inputs.values.first(where: { $0.activeTouch === touch }) else { continue }
+            input.activeTouch = nil
+            input.aimingKid = nil
+            input.arrow.isHidden = true
+            input.reticle.isHidden = true
         }
+    }
+
+    // MARK: - Remote guest input (hostOnline)
+
+    private func applyRemoteInput(_ command: InputCommand) {
+        guard state == .playing else { return }
+        let index = Int(command.kid)
+        guard index >= 0, index < enemies.count else { return }
+        let kid = enemies[index]
+        guard kid.canAct else { return }
+        let target = CGPoint(x: CGFloat(command.x) * size.width, y: CGFloat(command.y) * size.height)
+
+        switch command.kind {
+        case .move:
+            kid.moveTarget = walkClamped(target, team: .enemy)
+        case .throwBall:
+            guard kid.throwCooldown <= 0 else { return }
+            throwSnowball(from: kid, to: target)
+            kid.throwCooldown = (rapidTimers[.enemy] ?? 0) > 0
+                ? GameConfig.fastThrowCooldown
+                : GameConfig.playerThrowCooldown
+        }
+    }
+
+    private func peerLeft() {
+        guard mode.isOnline, state != .gameOver else { return }
+        state = .gameOver
+        clearFlyingSnowballs()
+        showBanner("PLAYER LEFT", subtitle: "TAP FOR MENU")
     }
 
     // MARK: - Game loop
@@ -519,8 +717,10 @@ final class GameScene: SKScene {
         let dt = CGFloat(min(currentTime - lastUpdateTime, 1.0 / 20.0))
         lastUpdateTime = currentTime
 
-        if megaBallTimer > 0 { megaBallTimer -= dt }
-        if rapidFireTimer > 0 { rapidFireTimer -= dt }
+        for team in [KidNode.Team.player, .enemy] {
+            if megaTimers[team, default: 0] > 0 { megaTimers[team, default: 0] -= dt }
+            if rapidTimers[team, default: 0] > 0 { rapidTimers[team, default: 0] -= dt }
+        }
 
         for kid in players {
             kid.update(deltaTime: dt)
@@ -528,27 +728,35 @@ final class GameScene: SKScene {
         }
         for kid in enemies {
             kid.update(deltaTime: dt)
-            updateEnemyAI(kid, deltaTime: dt)
+            if mode == .solo { updateEnemyAI(kid, deltaTime: dt) }
             kid.zPosition = zForGround(y: kid.position.y)
         }
 
         updateSnowballs(deltaTime: dt)
         updatePowerUps(deltaTime: dt)
 
-        // players first: a simultaneous double-wipe is a defeat, not a level clear
+        // red team checked first: a simultaneous double-wipe counts against red
+        // in solo (defeat) and for green in versus (they outlasted by initiative)
         if players.allSatisfy({ !$0.isAlive }) && !players.isEmpty {
-            gameOver()
+            mode == .solo ? soloGameOver() : roundWon(by: .enemy)
         } else if enemies.allSatisfy({ !$0.isAlive }) && !enemies.isEmpty {
-            levelCleared()
+            mode == .solo ? levelCleared() : roundWon(by: .player)
+        }
+
+        if mode.isOnline {
+            snapshotClock += dt
+            if snapshotClock >= 0.08 {
+                snapshotClock = 0
+                sendSnapshot()
+            }
         }
     }
 
-    // MARK: - Enemy AI
+    // MARK: - Enemy AI (solo only)
 
     private func updateEnemyAI(_ kid: KidNode, deltaTime dt: CGFloat) {
         guard kid.canAct else { return }
 
-        // Wander: drift between spots in the upper half, loosely hugging forts.
         kid.aiWanderTimer -= dt
         if kid.aiWanderTimer <= 0 {
             kid.aiWanderTimer = CGFloat.random(in: 2.5...5.5)
@@ -565,11 +773,9 @@ final class GameScene: SKScene {
             }
         }
 
-        // Throw at a living player on a timer, with level-scaled accuracy.
         kid.aiThrowTimer -= dt
         if kid.aiThrowTimer <= 0 {
-            // no lobbing while still marching in from beyond the top edge —
-            // an off-screen thrower would be impossible to hit back
+            // no lobbing while still marching in from beyond the top edge
             guard kid.position.y < size.height * 0.92 else {
                 kid.aiThrowTimer = 0.4
                 return
@@ -583,7 +789,6 @@ final class GameScene: SKScene {
             )
             kid.face(toward: aim)
             kid.moveTarget = nil
-            // brief windup before the ball leaves the mitten
             kid.run(.sequence([
                 .wait(forDuration: 0.28),
                 .run { [weak self, weak kid] in
@@ -616,10 +821,10 @@ final class GameScene: SKScene {
                 continue
             }
             if landed {
-                // A landing ball can still clip someone standing on the spot.
                 _ = checkKidHit(ball)
                 splat(at: ball.ground, big: ball.damage > 1)
                 Sound.shared.play("splat", volume: 0.4)
+                pushEvent(.splat)
                 finished.insert(ObjectIdentifier(ball))
             }
         }
@@ -640,19 +845,21 @@ final class GameScene: SKScene {
             let knockedOut = kid.takeHit(damage: ball.damage)
             splat(at: kid.position + CGPoint(x: 0, y: 24), big: ball.damage > 1)
 
-            if kid.team == .enemy {
+            if mode == .solo, kid.team == .enemy {
                 score += knockedOut ? GameConfig.scoreKO : GameConfig.scoreHit
             }
             if knockedOut {
                 Sound.shared.play("ko")
                 Haptics.shared.knockout()
-                if kid === selectedKid {
-                    // hand control to a surviving teammate so taps keep working
-                    selectKid(players.first(where: { $0.isAlive }))
+                shakeWorld()
+                pushEvent(.ko)
+                if kid === inputs[kid.team]?.selected {
+                    selectKid(kids(of: kid.team).first(where: { $0.isAlive }), team: kid.team)
                 }
             } else {
-                Sound.shared.play("thud", volume: 0.7)
+                Sound.shared.play("hit", volume: 0.7)
                 Haptics.shared.hit()
+                pushEvent(.hit)
             }
             return true
         }
@@ -661,18 +868,17 @@ final class GameScene: SKScene {
 
     private func checkFortHit(_ ball: Snowball) -> Bool {
         for fort in forts where fort.blocks(point: ball.ground) {
-            // the thrower's own cover is arced over, never chipped from behind
             if ball.exemptForts.contains(where: { $0 === fort }) { continue }
             fort.takeHit()
             splat(at: ball.ground + CGPoint(x: 0, y: 16), big: false)
             Sound.shared.play("splat", volume: 0.5)
+            pushEvent(.fortHit)
             return true
         }
         return false
     }
 
     private func splat(at point: CGPoint, big: Bool) {
-        // white puff
         for i in 0..<(big ? 9 : 5) {
             let bit = SKSpriteNode(texture: PixelArt.snowball)
             bit.setScale(CGFloat.random(in: 0.8...1.6))
@@ -689,7 +895,6 @@ final class GameScene: SKScene {
                 .removeFromParent(),
             ]))
         }
-        // lingering splat mark on the snow
         let mark = SKShapeNode(ellipseOf: CGSize(width: big ? 30 : 20, height: big ? 13 : 9))
         mark.fillColor = PixelArt.snowWhite
         mark.strokeColor = PixelArt.snowShadow.withAlphaComponent(0.4)
@@ -709,7 +914,7 @@ final class GameScene: SKScene {
                 let powerUp = PowerUpNode(kind: PowerUpNode.Kind.allCases.randomElement()!)
                 powerUp.position = CGPoint(
                     x: CGFloat.random(in: size.width * 0.15...size.width * 0.85),
-                    y: CGFloat.random(in: size.height * 0.22...size.height * 0.50)
+                    y: CGFloat.random(in: size.height * 0.30...size.height * 0.70)
                 )
                 powerUp.zPosition = 150
                 powerUp.setScale(0.1)
@@ -719,16 +924,18 @@ final class GameScene: SKScene {
             }
         }
 
+        // in versus, either team can grab a pickup; in solo, only yours
+        let collectors = mode.isVersus ? players + enemies : players
         powerUps.removeAll { powerUp in
             if powerUp.tick(deltaTime: dt) {
                 powerUp.removeFromParent()
                 return true
             }
-            let collector = players.first {
+            let collector = collectors.first {
                 $0.canAct && $0.position.distance(to: powerUp.position) < GameConfig.powerUpPickupRadius
             }
-            if collector != nil {
-                apply(powerUp.kind)
+            if let collector {
+                apply(powerUp.kind, to: collector.team)
                 powerUp.removeFromParent()
                 return true
             }
@@ -736,20 +943,70 @@ final class GameScene: SKScene {
         }
     }
 
-    private func apply(_ kind: PowerUpNode.Kind) {
+    private func apply(_ kind: PowerUpNode.Kind, to team: KidNode.Team) {
         Sound.shared.play("pickup")
         Haptics.shared.success()
+        pushEvent(.pickup)
         switch kind {
         case .megaBall:
-            megaBallTimer = GameConfig.powerUpDuration
+            megaTimers[team] = GameConfig.powerUpDuration
         case .cocoa:
-            for kid in players where kid.isAlive {
+            for kid in kids(of: team) where kid.isAlive {
                 kid.hp = min(kid.hp + 1, kid.maxHP)
                 kid.refreshHPPips()
             }
         case .rapidFire:
-            rapidFireTimer = GameConfig.powerUpDuration
+            rapidTimers[team] = GameConfig.powerUpDuration
         }
-        showHint(kind.title, holdFor: 2.5, fade: 0.8)
+        let prefix = mode.isVersus ? (team == .player ? "RED: " : "GREEN: ") : ""
+        showHint(prefix + kind.title, holdFor: 2.5, fade: 0.8)
+    }
+
+    // MARK: - Snapshots (hostOnline)
+
+    private func pushEvent(_ event: NetEvent) {
+        guard mode.isOnline else { return }
+        netEvents.append(event)
+    }
+
+    private func sendSnapshot() {
+        func state(of kid: KidNode) -> KidState {
+            KidState(
+                x: Float(kid.position.x / size.width),
+                y: Float(kid.position.y / size.height),
+                hp: Int8(kid.hp),
+                alive: kid.isAlive,
+                down: kid.knockdownTimer > 0,
+                faceLeft: kid.sprite.xScale < 0
+            )
+        }
+        let snapshot = GameSnapshot(
+            red: players.map(state(of:)),
+            green: enemies.map(state(of:)),
+            forts: forts.map { Int8($0.hp) },
+            balls: snowballs.map {
+                BallState(
+                    id: $0.id,
+                    x: Float($0.ground.x / size.width),
+                    y: Float($0.ground.y / size.height),
+                    height: Float($0.height),
+                    mega: $0.damage > 1
+                )
+            },
+            powers: powerUps.map {
+                PowerState(
+                    id: $0.id,
+                    kind: $0.kind.rawValue,
+                    x: Float($0.position.x / size.width),
+                    y: Float($0.position.y / size.height)
+                )
+            },
+            redWins: Int8(roundWins[.player] ?? 0),
+            greenWins: Int8(roundWins[.enemy] ?? 0),
+            events: netEvents
+        )
+        // events must not be dropped, so those snapshots go reliably
+        MultipeerSession.shared.send(.snapshot(snapshot), reliable: !netEvents.isEmpty)
+        netEvents = []
     }
 }
