@@ -178,6 +178,12 @@ final class OnlineGuestScene: SKScene {
         // from the guest's view GREEN is "us", so show green wins first
         scoreLabel.text = "GRN \(snapshot.greenWins)  —  \(snapshot.redWins) RED"
 
+        // hand selection to a living kid if ours was knocked out
+        // (short-circuit keeps green[selected] in bounds)
+        if selected >= green.count || !green[selected].isAlive {
+            if let alive = green.firstIndex(where: { $0.isAlive }) { selected = alive }
+        }
+
         for event in snapshot.events { handle(event) }
         maintainSelectionRing()
     }
@@ -274,7 +280,11 @@ final class OnlineGuestScene: SKScene {
     }
 
     private func maintainSelectionRing() {
-        guard selected < green.count else { return }
+        guard selected < green.count, green[selected].isAlive else {
+            selectionRingOwner?.setSelected(false)
+            selectionRingOwner = nil
+            return
+        }
         let kid = green[selected]
         if selectionRingOwner !== kid {
             selectionRingOwner?.setSelected(false)
@@ -375,19 +385,25 @@ final class OnlineGuestScene: SKScene {
         }
 
         if drag.length < 24 {
-            let host = unflip(location)
-            send(.move, kid: selected, target: host)
-            Sound.shared.play("click", volume: 0.3)
-            let marker = SKShapeNode(ellipseOf: CGSize(width: 26, height: 12))
-            marker.strokeColor = UIColor(red: 0.4, green: 0.6, blue: 0.4, alpha: 0.8)
-            marker.lineWidth = 2
-            marker.position = location
-            marker.zPosition = 250
-            world.addChild(marker)
-            marker.run(.sequence([
-                .group([.scale(to: 0.4, duration: 0.4), .fadeOut(withDuration: 0.4)]),
-                .removeFromParent(),
-            ]))
+            // our green team sits at the bottom here; the top half is enemy ground
+            if location.y >= size.height * 0.5 {
+                let thrower = nearestGreen(to: location) ?? selected
+                send(.throwBall, kid: thrower, target: unflip(location))
+                if thrower < green.count { green[thrower].playThrowAnimation() }
+            } else {
+                send(.move, kid: selected, target: unflip(location))
+                Sound.shared.play("click", volume: 0.3)
+                let marker = SKShapeNode(ellipseOf: CGSize(width: 26, height: 12))
+                marker.strokeColor = UIColor(red: 0.4, green: 0.6, blue: 0.4, alpha: 0.8)
+                marker.lineWidth = 2
+                marker.position = location
+                marker.zPosition = 250
+                world.addChild(marker)
+                marker.run(.sequence([
+                    .group([.scale(to: 0.4, duration: 0.4), .fadeOut(withDuration: 0.4)]),
+                    .removeFromParent(),
+                ]))
+            }
         }
     }
 

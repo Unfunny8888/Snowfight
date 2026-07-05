@@ -39,6 +39,13 @@ final class MultipeerSession: NSObject {
         matched = false
         myRoll = UInt32.random(in: 0...UInt32.max)
 
+        // A unique per-search display name guarantees the two devices never
+        // share a name (many are just "iPhone"), so both the invite gating and
+        // the host election below resolve to exactly one deterministic winner.
+        let suffix = String(UInt32.random(in: 0...UInt32.max), radix: 36)
+        let base = String(UIDevice.current.name.prefix(48))
+        myPeerID = MCPeerID(displayName: "\(base)#\(suffix)")
+
         let session = MCSession(peer: myPeerID, securityIdentity: nil, encryptionPreference: .required)
         session.delegate = self
         self.session = session
@@ -159,8 +166,9 @@ extension MultipeerSession: MCNearbyServiceAdvertiserDelegate {
 extension MultipeerSession: MCNearbyServiceBrowserDelegate {
     func browser(_ browser: MCNearbyServiceBrowser, foundPeer peerID: MCPeerID, withDiscoveryInfo info: [String: String]?) {
         guard let session, session.connectedPeers.isEmpty else { return }
-        // only the lexically-greater peer invites, so the pair agrees on one direction
-        guard myPeerID.displayName >= peerID.displayName else { return }
+        // names are unique, so exactly one side is the greater and invites; the
+        // other only advertises and accepts — one clean connection, no race
+        guard myPeerID.displayName > peerID.displayName else { return }
         browser.invitePeer(peerID, to: session, withContext: nil, timeout: 15)
     }
 

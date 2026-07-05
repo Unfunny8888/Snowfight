@@ -99,13 +99,13 @@ final class GameScene: SKScene {
         switch mode {
         case .solo:
             startLevel(1)
-            showHint("Drag from a red kid to throw  •  Tap snow to walk")
+            showHint("TAP the top to throw there  •  TAP your side to move")
         case .localVersus:
             startRound()
             showHint("Each player owns one half — drag from your kids to throw")
         case .hostOnline:
             startRound()
-            showHint("Nearby match — you are the RED team")
+            showHint("You are RED — tap the top to throw, your side to move")
         }
     }
 
@@ -410,6 +410,7 @@ final class GameScene: SKScene {
             if mode == .localVersus { selectKid(enemies[1], team: .enemy) }
         }
         pushEvent(.roundStart)
+        flushSnapshotIfOnline()
     }
 
     private func roundWon(by team: KidNode.Team) {
@@ -430,6 +431,14 @@ final class GameScene: SKScene {
             pushEvent(.roundEnd(greenWon: team == .enemy))
             showBanner("\(teamName) TAKES THE ROUND!", subtitle: "FIRST TO \(GameMode.roundsToWin)  •  TAP TO CONTINUE")
         }
+        // the update loop stops sending once state leaves .playing, so push this
+        // round/match-end snapshot out immediately or the guest never sees it
+        flushSnapshotIfOnline()
+    }
+
+    private func flushSnapshotIfOnline() {
+        guard mode.isOnline else { return }
+        sendSnapshot()
     }
 
     private func showBanner(_ title: String, subtitle: String) {
@@ -500,21 +509,44 @@ final class GameScene: SKScene {
         )
     }
 
-    /// Where a team's kids are allowed to walk.
+    /// Where a team's kids are allowed to walk. The two ranges stop short of the
+    /// y=0.5 midline (a small neutral gap) so no kid ever sits inside the other
+    /// team's touch region — keeping split-screen control unambiguous.
     private func walkClamped(_ point: CGPoint, team: KidNode.Team) -> CGPoint {
         let yRange: ClosedRange<CGFloat> = team == .player
-            ? (size.height * 0.08)...(size.height * 0.52)
-            : (size.height * 0.48)...(size.height * 0.92)
+            ? (size.height * 0.08)...(size.height * 0.47)
+            : (size.height * 0.53)...(size.height * 0.92)
         return CGPoint(
             x: clamp(point.x, 24, size.width - 24),
             y: clamp(point.y, yRange.lowerBound, yRange.upperBound)
         )
     }
 
+    /// True when a point lies in the team's own half of the field.
+    private func ownHalf(_ team: KidNode.Team, contains point: CGPoint) -> Bool {
+        team == .player ? point.y < size.height * 0.5 : point.y >= size.height * 0.5
+    }
+
     // MARK: - Throwing
 
+    /// AI-controlled only in solo mode, for the green team.
+    private func isAIThrow(_ kid: KidNode) -> Bool {
+        mode == .solo && kid.team == .enemy
+    }
+
     private func throwSnowball(from kid: KidNode, to rawTarget: CGPoint) {
-        let target = fieldClamped(rawTarget)
+        var target = fieldClamped(rawTarget)
+
+        // Aim assist: a human throw snaps onto the nearest opposing kid close to
+        // the aim point, so hitting is forgiving. The AI never gets this help.
+        if !isAIThrow(kid) {
+            let foes = (kid.team == .player ? enemies : players).filter { $0.isAlive }
+            if let nearest = foes.min(by: { $0.position.distance(to: target) < $1.position.distance(to: target) }),
+               nearest.position.distance(to: target) < GameConfig.aimAssistRadius {
+                target = nearest.position
+            }
+        }
+
         kid.face(toward: target)
         kid.playThrowAnimation()
         Sound.shared.play("throw", volume: 0.6)
@@ -647,24 +679,51 @@ final class GameScene: SKScene {
                 continue
             }
 
-            // Ground tap: send the selected kid there.
-            if drag.length < 24, let kid = input.selected, kid.canAct {
-                let destination = walkClamped(location, team: team)
-                kid.moveTarget = destination
-                Sound.shared.play("click", volume: 0.3)
-
-                let marker = SKShapeNode(ellipseOf: CGSize(width: 26, height: 12))
-                marker.strokeColor = UIColor(red: 0.4, green: 0.55, blue: 0.75, alpha: 0.8)
-                marker.lineWidth = 2
-                marker.position = destination
-                marker.zPosition = 250
-                world.addChild(marker)
-                marker.run(.sequence([
-                    .group([.scale(to: 0.4, duration: 0.4), .fadeOut(withDuration: 0.4)]),
-                    .removeFromParent(),
-                ]))
+            // A tap: in your own half it moves the selected kid; in the enemy
+            // half it fires from your best-placed kid straight at that spot.
+            if drag.length < 24 {
+                if ownHalf(team, contains: location) {
+                    moveSelected(team: team, to: location, input: input)
+                } else {
+                    autoThrow(team: team, at: location)
+                }
             }
         }
+    }
+
+    private func moveSelected(team: KidNode.Team, to location: CGPoint, input: TeamInput) {
+        guard let kid = input.selected, kid.canAct else { return }
+        let destination = walkClamped(location, team: team)
+        kid.moveTarget = destination
+        Sound.shared.play("click", volume: 0.3)
+
+        let marker = SKShapeNode(ellipseOf: CGSize(width: 26, height: 12))
+        marker.strokeColor = UIColor(red: 0.4, green: 0.55, blue: 0.75, alpha: 0.8)
+        marker.lineWidth = 2
+        marker.position = destination
+        marker.zPosition = 250
+        world.addChild(marker)
+        marker.run(.sequence([
+            .group([.scale(to: 0.4, duration: 0.4), .fadeOut(withDuration: 0.4)]),
+            .removeFromParent(),
+        ]))
+    }
+
+    /// Tap-to-attack: the readiest kid nearest the target throws at it (with
+    /// aim assist). This is the easy way to attack — no precise drag needed.
+    private func autoThrow(team: KidNode.Team, at point: CGPoint) {
+        let ready = kids(of: team).filter { $0.canAct && $0.throwCooldown <= 0 }
+        guard let thrower = ready.min(by: {
+            $0.position.distance(to: point) < $1.position.distance(to: point)
+        }) else {
+            Sound.shared.play("click", volume: 0.3)
+            return
+        }
+        selectKid(thrower, team: team)
+        throwSnowball(from: thrower, to: point)
+        thrower.throwCooldown = (rapidTimers[team] ?? 0) > 0
+            ? GameConfig.fastThrowCooldown
+            : GameConfig.playerThrowCooldown
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -912,9 +971,19 @@ final class GameScene: SKScene {
             powerUpTimer = CGFloat.random(in: GameConfig.powerUpInterval)
             if powerUps.count < 2 {
                 let powerUp = PowerUpNode(kind: PowerUpNode.Kind.allCases.randomElement()!)
+                // spawn only where a team can actually walk to collect it: the
+                // red-reachable band in solo, or one side's band in versus
+                let y: CGFloat
+                if mode.isVersus {
+                    y = Bool.random()
+                        ? CGFloat.random(in: size.height * 0.20...size.height * 0.44)
+                        : CGFloat.random(in: size.height * 0.56...size.height * 0.80)
+                } else {
+                    y = CGFloat.random(in: size.height * 0.18...size.height * 0.46)
+                }
                 powerUp.position = CGPoint(
                     x: CGFloat.random(in: size.width * 0.15...size.width * 0.85),
-                    y: CGFloat.random(in: size.height * 0.30...size.height * 0.70)
+                    y: y
                 )
                 powerUp.zPosition = 150
                 powerUp.setScale(0.1)

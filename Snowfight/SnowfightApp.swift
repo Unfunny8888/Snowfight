@@ -12,7 +12,8 @@ struct SnowfightApp: App {
 
 struct GameContainerView: View {
     @State private var scene: SKScene = {
-        let scene = MenuScene(size: CGSize(width: 390, height: 844))
+        // Landscape-first; resizeFill settles to the real device size on present.
+        let scene = MenuScene(size: CGSize(width: 844, height: 390))
         scene.scaleMode = .resizeFill
         return scene
     }()

@@ -11,27 +11,31 @@ enum GameConfig {
     static let knockdownDuration: CGFloat = 1.4
 
     // Throwing
-    static let playerThrowSpeed: CGFloat = 380
-    static let enemyThrowSpeed: CGFloat = 250
-    static let playerThrowCooldown: CGFloat = 0.7
-    static let fastThrowCooldown: CGFloat = 0.28
+    static let playerThrowSpeed: CGFloat = 420
+    static let enemyThrowSpeed: CGFloat = 240
+    static let playerThrowCooldown: CGFloat = 0.5
+    static let fastThrowCooldown: CGFloat = 0.24
     static let dragToRangeFactor: CGFloat = 2.1
-    static let minDragToThrow: CGFloat = 22
-    static let hitRadius: CGFloat = 17
-    static let megaHitRadius: CGFloat = 26
+    static let minDragToThrow: CGFloat = 20
+    static let hitRadius: CGFloat = 20
+    static let megaHitRadius: CGFloat = 30
+    /// Human throws snap onto an opposing kid within this radius of the aim
+    /// point, so landing a hit is forgiving. AI throws never get this help.
+    static let aimAssistRadius: CGFloat = 60
 
-    // Enemy AI per level
-    static func enemyCount(level: Int) -> Int { min(2 + level, 8) }
-    static func enemyHP(level: Int) -> Int { level >= 3 ? 3 : 2 }
+    // Enemy AI per level — tuned gentle so the early game is approachable and
+    // the ramp is gradual (the AI throws less often and misses more than before).
+    static func enemyCount(level: Int) -> Int { min(1 + level, 6) }
+    static func enemyHP(level: Int) -> Int { level >= 4 ? 3 : 2 }
     static func enemyThrowInterval(level: Int) -> ClosedRange<CGFloat> {
-        let base = max(1.1, 3.4 - CGFloat(level) * 0.28)
-        return base...(base + 1.4)
+        let base = max(1.7, 4.2 - CGFloat(level) * 0.26)
+        return base...(base + 1.8)
     }
     static func enemyAimError(level: Int) -> CGFloat {
-        max(14, 85 - CGFloat(level) * 9)
+        max(34, 120 - CGFloat(level) * 8)
     }
     static func enemyMoveSpeed(level: Int) -> CGFloat {
-        enemyBaseMoveSpeed + CGFloat(level) * 6
+        enemyBaseMoveSpeed + CGFloat(level) * 4
     }
 
     // Forts
