@@ -18,6 +18,8 @@ final class Snowball {
     var progress: CGFloat = 0
     /// Current ground-plane position (where the shadow sits).
     var ground: CGPoint
+    /// Forts the thrower was sheltering behind — this ball arcs over them.
+    var exemptForts: [FortNode] = []
 
     private static let shadowTexture = PixelArt.circleTexture(
         diameter: 14,

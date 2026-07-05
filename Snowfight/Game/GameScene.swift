@@ -55,7 +55,7 @@ final class GameScene: SKScene {
 
     override func didMove(to view: SKView) {
         backgroundColor = PixelArt.snowGround
-        Sound.shared.prime()
+        Sound.warmUp()
 
         addChild(world)
         buildField()
@@ -190,29 +190,14 @@ final class GameScene: SKScene {
     }
 
     private func buildSnowfall() {
-        let emitter = SKEmitterNode()
-        emitter.particleTexture = PixelArt.circleTexture(diameter: 6, color: .white)
-        emitter.particleBirthRate = 8
-        emitter.particleLifetime = 14
-        emitter.particleLifetimeRange = 4
-        emitter.particlePositionRange = CGVector(dx: size.width * 1.2, dy: 0)
-        emitter.particleSpeed = -28
-        emitter.particleSpeedRange = 14
-        emitter.emissionAngle = -.pi / 2
-        emitter.particleAlpha = 0.55
-        emitter.particleAlphaRange = 0.3
-        emitter.particleScale = 0.35
-        emitter.particleScaleRange = 0.2
-        emitter.position = CGPoint(x: size.width / 2, y: size.height + 10)
-        emitter.zPosition = 500
-        addChild(emitter)
+        addChild(PixelArt.snowfallEmitter(sceneSize: size, birthRate: 8))
     }
 
-    private func showHint(_ text: String) {
+    private func showHint(_ text: String, holdFor: TimeInterval = 6, fade: TimeInterval = 1) {
         hintLabel.text = text
         hintLabel.alpha = 1
         hintLabel.removeAllActions()
-        hintLabel.run(.sequence([.wait(forDuration: 6), .fadeOut(withDuration: 1)]))
+        hintLabel.run(.sequence([.wait(forDuration: holdFor), .fadeOut(withDuration: fade)]))
     }
 
     /// Lower on screen = closer to camera = drawn on top.
@@ -227,6 +212,12 @@ final class GameScene: SKScene {
         levelLabel.text = "LEVEL \(level)"
         state = .playing
         banner.isHidden = true
+
+        // drop any drag that was held across the transition
+        activeTouch = nil
+        aimingKid = nil
+        aimArrow.isHidden = true
+        aimReticle.isHidden = true
 
         for ball in snowballs { ball.removeFromScene() }
         snowballs = []
@@ -285,6 +276,7 @@ final class GameScene: SKScene {
 
     private func levelCleared() {
         state = .levelBreak
+        clearFlyingSnowballs()
         let survivors = players.filter { $0.isAlive }
         let bonus = GameConfig.scoreLevelClear + survivors.reduce(0) { $0 + $1.hp * GameConfig.scoreSurvivorBonus }
         score += bonus
@@ -297,8 +289,14 @@ final class GameScene: SKScene {
         banner.run(.scale(to: 1, duration: 0.25))
     }
 
+    private func clearFlyingSnowballs() {
+        for ball in snowballs { ball.removeFromScene() }
+        snowballs = []
+    }
+
     private func gameOver() {
         state = .gameOver
+        clearFlyingSnowballs()
         Sound.shared.play("gameover")
         Haptics.shared.failure()
 
@@ -336,11 +334,18 @@ final class GameScene: SKScene {
         kid?.setSelected(true)
     }
 
+    /// Nearest living kid within grab range of the touch, if any.
     private func playerKid(near point: CGPoint) -> KidNode? {
-        players
-            .filter { $0.isAlive }
-            .min(by: { $0.position.distance(to: point) < $1.position.distance(to: point) })
-            .flatMap { $0.position.distance(to: point) < 52 ? $0 : nil }
+        var best: KidNode?
+        var bestDistance: CGFloat = 52
+        for kid in players where kid.isAlive {
+            let distance = kid.position.distance(to: point)
+            if distance < bestDistance {
+                best = kid
+                bestDistance = distance
+            }
+        }
+        return best
     }
 
     private func fieldClamped(_ point: CGPoint) -> CGPoint {
@@ -365,6 +370,8 @@ final class GameScene: SKScene {
             speed: kid.team == .player ? GameConfig.playerThrowSpeed : GameConfig.enemyThrowSpeed,
             damage: isMega ? 2 : 1
         )
+        // a ball lobbed from behind (or on) a fort arcs over it instead of chipping it
+        ball.exemptForts = forts.filter { $0.shelters(launchPoint: kid.position) }
         world.addChild(ball.node)
         world.addChild(ball.shadow)
         snowballs.append(ball)
@@ -413,7 +420,12 @@ final class GameScene: SKScene {
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
         guard let touch = activeTouch, touches.contains(touch) else { return }
-        guard state == .playing, let kid = aimingKid, kid.canAct else { return }
+        guard state == .playing, let kid = aimingKid, kid.canAct else {
+            // the aiming kid was knocked down (or the game left play) mid-drag
+            aimArrow.isHidden = true
+            aimReticle.isHidden = true
+            return
+        }
 
         let location = touch.location(in: self)
         let drag = location - aimStart
@@ -431,6 +443,10 @@ final class GameScene: SKScene {
         aimArrow.isHidden = false
         aimReticle.position = target
         aimReticle.isHidden = false
+        // dim the aim while the kid is still reloading so a blocked shot isn't a surprise
+        let ready = kid.throwCooldown <= 0
+        aimArrow.alpha = ready ? 1 : 0.35
+        aimReticle.alpha = ready ? 1 : 0.35
         kid.face(toward: target)
     }
 
@@ -446,12 +462,17 @@ final class GameScene: SKScene {
 
         if let kid = aimingKid {
             aimingKid = nil
-            if drag.length >= GameConfig.minDragToThrow, kid.canAct, kid.throwCooldown <= 0 {
-                let target = kid.position + drag * GameConfig.dragToRangeFactor
-                throwSnowball(from: kid, to: target)
-                kid.throwCooldown = rapidFireTimer > 0
-                    ? GameConfig.fastThrowCooldown
-                    : GameConfig.playerThrowCooldown
+            if drag.length >= GameConfig.minDragToThrow, kid.canAct {
+                if kid.throwCooldown <= 0 {
+                    let target = kid.position + drag * GameConfig.dragToRangeFactor
+                    throwSnowball(from: kid, to: target)
+                    kid.throwCooldown = rapidFireTimer > 0
+                        ? GameConfig.fastThrowCooldown
+                        : GameConfig.playerThrowCooldown
+                } else {
+                    // still reloading — acknowledge the input instead of silence
+                    Sound.shared.play("click", volume: 0.3)
+                }
             }
             return
         }
@@ -514,10 +535,11 @@ final class GameScene: SKScene {
         updateSnowballs(deltaTime: dt)
         updatePowerUps(deltaTime: dt)
 
-        if enemies.allSatisfy({ !$0.isAlive }) && !enemies.isEmpty {
-            levelCleared()
-        } else if players.allSatisfy({ !$0.isAlive }) && !players.isEmpty {
+        // players first: a simultaneous double-wipe is a defeat, not a level clear
+        if players.allSatisfy({ !$0.isAlive }) && !players.isEmpty {
             gameOver()
+        } else if enemies.allSatisfy({ !$0.isAlive }) && !enemies.isEmpty {
+            levelCleared()
         }
     }
 
@@ -546,6 +568,12 @@ final class GameScene: SKScene {
         // Throw at a living player on a timer, with level-scaled accuracy.
         kid.aiThrowTimer -= dt
         if kid.aiThrowTimer <= 0 {
+            // no lobbing while still marching in from beyond the top edge —
+            // an off-screen thrower would be impossible to hit back
+            guard kid.position.y < size.height * 0.92 else {
+                kid.aiThrowTimer = 0.4
+                return
+            }
             kid.aiThrowTimer = CGFloat.random(in: GameConfig.enemyThrowInterval(level: level))
             guard let target = players.filter({ $0.isAlive }).randomElement() else { return }
             let error = GameConfig.enemyAimError(level: level)
@@ -570,24 +598,21 @@ final class GameScene: SKScene {
     // MARK: - Snowballs
 
     private func updateSnowballs(deltaTime dt: CGFloat) {
-        var finished: [Snowball] = []
+        var finished = Set<ObjectIdentifier>()
 
         for ball in snowballs {
             let landed = ball.advance(deltaTime: dt)
             ball.node.zPosition = 200 + zForGround(y: ball.ground.y) * 0.01
 
             var consumed = false
-            // skip the first slice of flight so balls clear the thrower & own fort wall
-            if ball.progress > 0.12 {
-                if ball.height < 34 {
-                    consumed = checkKidHit(ball)
-                }
-                if !consumed, ball.height < 26 {
-                    consumed = checkFortHit(ball)
-                }
+            if ball.height < 34 {
+                consumed = checkKidHit(ball)
+            }
+            if !consumed, ball.height < 26 {
+                consumed = checkFortHit(ball)
             }
             if consumed {
-                finished.append(ball)
+                finished.insert(ObjectIdentifier(ball))
                 continue
             }
             if landed {
@@ -595,15 +620,15 @@ final class GameScene: SKScene {
                 _ = checkKidHit(ball)
                 splat(at: ball.ground, big: ball.damage > 1)
                 Sound.shared.play("splat", volume: 0.4)
-                finished.append(ball)
+                finished.insert(ObjectIdentifier(ball))
             }
         }
 
-        for ball in finished {
+        guard !finished.isEmpty else { return }
+        snowballs.removeAll { ball in
+            guard finished.contains(ObjectIdentifier(ball)) else { return false }
             ball.removeFromScene()
-            if let index = snowballs.firstIndex(where: { $0 === ball }) {
-                snowballs.remove(at: index)
-            }
+            return true
         }
     }
 
@@ -621,6 +646,10 @@ final class GameScene: SKScene {
             if knockedOut {
                 Sound.shared.play("ko")
                 Haptics.shared.knockout()
+                if kid === selectedKid {
+                    // hand control to a surviving teammate so taps keep working
+                    selectKid(players.first(where: { $0.isAlive }))
+                }
             } else {
                 Sound.shared.play("thud", volume: 0.7)
                 Haptics.shared.hit()
@@ -632,6 +661,8 @@ final class GameScene: SKScene {
 
     private func checkFortHit(_ ball: Snowball) -> Bool {
         for fort in forts where fort.blocks(point: ball.ground) {
+            // the thrower's own cover is arced over, never chipped from behind
+            if ball.exemptForts.contains(where: { $0 === fort }) { continue }
             fort.takeHit()
             splat(at: ball.ground + CGPoint(x: 0, y: 16), big: false)
             Sound.shared.play("splat", volume: 0.5)
@@ -688,25 +719,20 @@ final class GameScene: SKScene {
             }
         }
 
-        var removed: [PowerUpNode] = []
-        for powerUp in powerUps {
+        powerUps.removeAll { powerUp in
             if powerUp.tick(deltaTime: dt) {
-                removed.append(powerUp)
-                continue
+                powerUp.removeFromParent()
+                return true
             }
-            for kid in players where kid.canAct {
-                if kid.position.distance(to: powerUp.position) < GameConfig.powerUpPickupRadius {
-                    apply(powerUp.kind)
-                    removed.append(powerUp)
-                    break
-                }
+            let collector = players.first {
+                $0.canAct && $0.position.distance(to: powerUp.position) < GameConfig.powerUpPickupRadius
             }
-        }
-        for powerUp in removed {
-            powerUp.removeFromParent()
-            if let index = powerUps.firstIndex(where: { $0 === powerUp }) {
-                powerUps.remove(at: index)
+            if collector != nil {
+                apply(powerUp.kind)
+                powerUp.removeFromParent()
+                return true
             }
+            return false
         }
     }
 
@@ -724,9 +750,6 @@ final class GameScene: SKScene {
         case .rapidFire:
             rapidFireTimer = GameConfig.powerUpDuration
         }
-        showHint(kind.title)
-        hintLabel.alpha = 1
-        hintLabel.removeAllActions()
-        hintLabel.run(.sequence([.wait(forDuration: 2.5), .fadeOut(withDuration: 0.8)]))
+        showHint(kind.title, holdFor: 2.5, fade: 0.8)
     }
 }

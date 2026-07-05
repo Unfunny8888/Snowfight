@@ -172,6 +172,30 @@ enum PixelArt {
         return SKTexture(image: image)
     }
 
+    // MARK: - Snowfall
+
+    /// Shared falling-snow emitter. Positive speed along the downward
+    /// emission angle so flakes actually descend into the scene.
+    static func snowfallEmitter(sceneSize: CGSize, birthRate: CGFloat) -> SKEmitterNode {
+        let emitter = SKEmitterNode()
+        emitter.particleTexture = circleTexture(diameter: 6, color: .white)
+        emitter.particleBirthRate = birthRate
+        emitter.particleLifetime = 14
+        emitter.particleLifetimeRange = 4
+        emitter.particlePositionRange = CGVector(dx: sceneSize.width * 1.2, dy: 0)
+        emitter.emissionAngle = -.pi / 2
+        emitter.particleSpeed = 30
+        emitter.particleSpeedRange = 14
+        emitter.particleAlpha = 0.6
+        emitter.particleAlphaRange = 0.3
+        emitter.particleScale = 0.35
+        emitter.particleScaleRange = 0.2
+        emitter.position = CGPoint(x: sceneSize.width / 2, y: sceneSize.height + 10)
+        emitter.zPosition = 500
+        emitter.advanceSimulationTime(12)
+        return emitter
+    }
+
     // MARK: - Ground
 
     /// Subtle speckled snow texture stretched over the whole field.
@@ -185,7 +209,8 @@ enum PixelArt {
             var seed: UInt64 = 0x5EED_5EED
             func next() -> CGFloat {
                 seed = seed &* 6364136223846793005 &+ 1442695040888963407
-                return CGFloat(seed >> 33) / CGFloat(UInt32.max)
+                // keep the top 24 bits so the result spans the full [0, 1)
+                return CGFloat(seed >> 40) / CGFloat(1 << 24)
             }
 
             // sparkles and dents

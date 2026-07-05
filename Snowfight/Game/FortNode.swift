@@ -5,13 +5,21 @@ import SpriteKit
 final class FortNode: SKNode {
     private(set) var hp: Int = GameConfig.fortHP
     private let sprite: SKSpriteNode
+    private var damageState = 0
+
+    /// The three damage-state textures are rendered once and shared by all forts.
+    private static let textures = [
+        PixelArt.fortTexture(damage: 0),
+        PixelArt.fortTexture(damage: 1),
+        PixelArt.fortTexture(damage: 2),
+    ]
 
     /// Half-extents of the blocking ellipse in scene points.
     let blockRadiusX: CGFloat = 58
     let blockRadiusY: CGFloat = 20
 
     override init() {
-        sprite = SKSpriteNode(texture: PixelArt.fortTexture(damage: 0))
+        sprite = SKSpriteNode(texture: FortNode.textures[0])
         sprite.anchorPoint = CGPoint(x: 0.5, y: 0.18)
         super.init()
         addChild(sprite)
@@ -23,7 +31,8 @@ final class FortNode: SKNode {
 
     func reset() {
         hp = GameConfig.fortHP
-        sprite.texture = PixelArt.fortTexture(damage: 0)
+        damageState = 0
+        sprite.texture = FortNode.textures[0]
         sprite.alpha = 1
     }
 
@@ -35,11 +44,22 @@ final class FortNode: SKNode {
         return dx * dx + dy * dy < 1
     }
 
+    /// True when a throw launched here should ignore this fort — the thrower
+    /// is inside or right behind it, lobbing over their own cover.
+    func shelters(launchPoint: CGPoint) -> Bool {
+        let dx = (launchPoint.x - position.x) / (blockRadiusX * 1.5)
+        let dy = (launchPoint.y - position.y) / (blockRadiusY * 2.6)
+        return dx * dx + dy * dy < 1
+    }
+
     func takeHit() {
         guard isStanding else { return }
         hp -= 1
-        let damageState = hp <= 0 ? 2 : (hp <= GameConfig.fortHP / 2 ? 1 : 0)
-        sprite.texture = PixelArt.fortTexture(damage: damageState)
+        let newState = hp <= 0 ? 2 : (hp <= GameConfig.fortHP / 2 ? 1 : 0)
+        if newState != damageState {
+            damageState = newState
+            sprite.texture = FortNode.textures[newState]
+        }
         sprite.run(.sequence([
             .scaleY(to: 0.92, duration: 0.06),
             .scaleY(to: 1.0, duration: 0.10),

@@ -26,8 +26,13 @@ final class Sound {
         register("gameover", data: Synth.jingle([392.0, 329.63, 261.63, 196.0], noteLength: 0.2), voices: 1)
     }
 
-    /// Call early so the singleton (and audio session) initializes off the hot path.
-    func prime() {}
+    /// Warms the singleton (synthesis + audio session + player pools) on a
+    /// background queue so scene presentation never blocks on it.
+    static func warmUp() {
+        DispatchQueue.global(qos: .utility).async {
+            _ = Sound.shared
+        }
+    }
 
     private func register(_ name: String, data: Data, voices: Int) {
         var players: [AVAudioPlayer] = []
@@ -57,8 +62,9 @@ enum Synth {
     static let sampleRate = 22050.0
 
     private static func wavData(_ samples: [Float]) -> Data {
-        var data = Data()
         let byteCount = samples.count * 2
+        var data = Data()
+        data.reserveCapacity(44 + byteCount)
 
         func append(_ value: UInt32) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }
         func append16(_ value: UInt16) { withUnsafeBytes(of: value.littleEndian) { data.append(contentsOf: $0) } }

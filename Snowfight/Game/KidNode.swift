@@ -157,6 +157,7 @@ final class KidNode: SKNode {
             isAlive = false
             refreshHPPips()
             sprite.removeAllActions()
+            sprite.texture = idleTexture // a cancelled throw must not leave the windup pose
             // tip over and sink into the snow
             let fall = SKAction.group([
                 .rotate(toAngle: sprite.xScale < 0 ? .pi / 2 : -.pi / 2, duration: 0.25),
@@ -177,6 +178,8 @@ final class KidNode: SKNode {
 
         knockdownTimer = GameConfig.knockdownDuration
         sprite.removeAllActions()
+        sprite.texture = idleTexture // a cancelled throw must not leave the windup pose
+        sprite.position = .zero
         isBobbing = false
         let tip = SKAction.rotate(toAngle: sprite.xScale < 0 ? .pi / 2 : -.pi / 2, duration: 0.15)
         let wait = SKAction.wait(forDuration: Double(GameConfig.knockdownDuration) - 0.45)

@@ -5,23 +5,23 @@ import UIKit
 /// high score, and a big play button.
 final class MenuScene: SKScene {
 
-    private var built = false
+    private var builtSize: CGSize = .zero
 
     override func didMove(to view: SKView) {
-        Sound.shared.prime()
+        Sound.warmUp()
         buildUI()
     }
 
     override func didChangeSize(_ oldSize: CGSize) {
         // resizeFill can settle the real size after presentation; rebuild once stable
-        if built, size.width > 0, size.height > 0 {
+        if builtSize != .zero, size.width > 0, size.height > 0, size != builtSize {
             buildUI()
         }
     }
 
     private func buildUI() {
         removeAllChildren()
-        built = true
+        builtSize = size
         backgroundColor = PixelArt.snowGround
 
         let ground = SKSpriteNode(texture: PixelArt.groundTexture(size: size))
@@ -114,24 +114,7 @@ final class MenuScene: SKScene {
             addChild(label)
         }
 
-        // Snowfall
-        let emitter = SKEmitterNode()
-        emitter.particleTexture = PixelArt.circleTexture(diameter: 6, color: .white)
-        emitter.particleBirthRate = 14
-        emitter.particleLifetime = 14
-        emitter.particleLifetimeRange = 4
-        emitter.particlePositionRange = CGVector(dx: size.width * 1.2, dy: 0)
-        emitter.particleSpeed = -30
-        emitter.particleSpeedRange = 16
-        emitter.emissionAngle = -.pi / 2
-        emitter.particleAlpha = 0.6
-        emitter.particleAlphaRange = 0.3
-        emitter.particleScale = 0.4
-        emitter.particleScaleRange = 0.25
-        emitter.position = CGPoint(x: size.width / 2, y: size.height + 10)
-        emitter.zPosition = 500
-        emitter.advanceSimulationTime(10)
-        addChild(emitter)
+        addChild(PixelArt.snowfallEmitter(sceneSize: size, birthRate: 14))
     }
 
     private func bounce(_ node: SKNode, delay: TimeInterval) {
