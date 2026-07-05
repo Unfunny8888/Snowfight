@@ -301,9 +301,26 @@ final class OnlineGuestScene: SKScene {
 
     // MARK: - Input → commands
 
+    /// Nearest living green kid within grab range of a touch (for selecting).
     private func nearestGreen(to point: CGPoint) -> Int? {
         var best: Int?
         var bestDistance: CGFloat = 52
+        for (i, kid) in green.enumerated() where kid.isAlive {
+            let distance = kid.position.distance(to: point)
+            if distance < bestDistance {
+                best = i
+                bestDistance = distance
+            }
+        }
+        return best
+    }
+
+    /// Best-placed living green kid to throw at a target (no range cap), so a
+    /// tap on the far enemy side fires from the front-most kid — matching the
+    /// host's autoThrow choice rather than whoever was last selected.
+    private func bestGreenThrower(towards point: CGPoint) -> Int? {
+        var best: Int?
+        var bestDistance = CGFloat.greatestFiniteMagnitude
         for (i, kid) in green.enumerated() where kid.isAlive {
             let distance = kid.position.distance(to: point)
             if distance < bestDistance {
@@ -387,9 +404,9 @@ final class OnlineGuestScene: SKScene {
         if drag.length < 24 {
             // our green team sits at the bottom here; the top half is enemy ground
             if location.y >= size.height * 0.5 {
-                let thrower = nearestGreen(to: location) ?? selected
+                let thrower = bestGreenThrower(towards: location) ?? selected
                 send(.throwBall, kid: thrower, target: unflip(location))
-                if thrower < green.count { green[thrower].playThrowAnimation() }
+                if thrower < green.count, green[thrower].isAlive { green[thrower].playThrowAnimation() }
             } else {
                 send(.move, kid: selected, target: unflip(location))
                 Sound.shared.play("click", volume: 0.3)
