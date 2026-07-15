@@ -4,7 +4,7 @@ Thanks for playing **Snowfight**, the classic snowball battle!
 
 ## Contact
 
-Questions, bugs, or feedback? Email **YOUR_EMAIL@example.com** and we'll get back to you.
+Questions, bugs, or feedback? Email **winterbattle@delhiinmongol.com** and we'll get back to you.
 
 ## How to play
 
