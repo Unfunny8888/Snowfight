@@ -105,10 +105,10 @@ final class GameScene: SKScene {
             showHint("Move your kids OUT of the dome to fight  •  smash theirs!", holdFor: 8)
         case .localVersus:
             startRound()
-            showHint("Each player owns one half — drag from your kids to throw")
+            showHint("Move your kids OUT of your dome, then drag to throw!", holdFor: 8)
         case .hostOnline:
             startRound()
-            showHint("You are RED — tap the top to throw, your side to move")
+            showHint("You are RED — leave your dome to fight, and smash theirs!", holdFor: 8)
         }
     }
 
@@ -133,11 +133,10 @@ final class GameScene: SKScene {
             forts.append(fort)
         }
 
-        // Solo: each team gets a destructible ice-dome shelter to deploy from.
-        if mode == .solo {
-            playerShelter = addShelter(at: CGPoint(x: size.width * 0.5, y: size.height * 0.13))
-            enemyShelter = addShelter(at: CGPoint(x: size.width * 0.5, y: size.height * 0.87))
-        }
+        // Every mode: each team gets a destructible ice-dome shelter to deploy
+        // from. In solo the enemy AI deploys itself; in versus both are human.
+        playerShelter = addShelter(at: CGPoint(x: size.width * 0.5, y: size.height * 0.13))
+        enemyShelter = addShelter(at: CGPoint(x: size.width * 0.5, y: size.height * 0.87))
     }
 
     private func addShelter(at point: CGPoint) -> ShelterNode {
@@ -318,13 +317,13 @@ final class GameScene: SKScene {
         [0.25, 0.5, 0.75].map { CGPoint(x: size.width * $0, y: size.height * 0.84) }
     }
 
-    /// Solo spawns are clustered inside each team's ice dome (so the kids start
-    /// sheltered). Extra enemies stack onto the three mouth positions.
-    private var soloRedSpawns: [CGPoint] {
+    /// Dome spawns are clustered inside each team's ice dome (so the kids start
+    /// sheltered). Extra solo enemies stack onto the three mouth positions.
+    private var domeRedSpawns: [CGPoint] {
         [0.42, 0.5, 0.58].map { CGPoint(x: size.width * $0, y: size.height * 0.13) }
     }
 
-    private var soloGreenSpawns: [CGPoint] {
+    private var domeGreenSpawns: [CGPoint] {
         [0.42, 0.5, 0.58].map { CGPoint(x: size.width * $0, y: size.height * 0.87) }
     }
 
@@ -360,7 +359,7 @@ final class GameScene: SKScene {
         playerShelter?.reset()
         enemyShelter?.reset()
 
-        let redSpots = soloRedSpawns
+        let redSpots = domeRedSpawns
         if players.isEmpty {
             for spawn in redSpots {
                 let kid = KidNode(team: .player, hp: GameConfig.maxHP)
@@ -386,7 +385,7 @@ final class GameScene: SKScene {
         for enemy in enemies { enemy.removeFromParent() }
         enemies = []
         let count = GameConfig.enemyCount(level: level)
-        let greenSpots = soloGreenSpawns
+        let greenSpots = domeGreenSpawns
         for i in 0..<count {
             let kid = KidNode(team: .enemy, hp: GameConfig.enemyHP(level: level))
             kid.moveSpeed = GameConfig.enemyMoveSpeed(level: level)
@@ -430,16 +429,22 @@ final class GameScene: SKScene {
         state = .playing
         banner.isHidden = true
         clearFieldObjects()
+        playerShelter?.reset()
+        enemyShelter?.reset()
         refreshVersusLabel()
 
+        // Both teams start sheltered inside their domes and are deployed out by
+        // their human player (or the remote guest for the green team online).
+        let redSpots = domeRedSpawns
+        let greenSpots = domeGreenSpawns
         if players.isEmpty {
-            for spawn in redSpawns {
+            for spawn in redSpots {
                 let kid = KidNode(team: .player, hp: GameConfig.maxHP)
                 kid.position = spawn
                 world.addChild(kid)
                 players.append(kid)
             }
-            for spawn in greenSpawns {
+            for spawn in greenSpots {
                 let kid = KidNode(team: .enemy, hp: GameConfig.maxHP)
                 kid.moveSpeed = GameConfig.playerMoveSpeed
                 kid.position = spawn
@@ -449,8 +454,8 @@ final class GameScene: SKScene {
             selectKid(players[1], team: .player)
             if mode == .localVersus { selectKid(enemies[1], team: .enemy) }
         } else {
-            for (i, kid) in players.enumerated() { kid.resetForRound(at: redSpawns[i % 3]) }
-            for (i, kid) in enemies.enumerated() { kid.resetForRound(at: greenSpawns[i % 3]) }
+            for (i, kid) in players.enumerated() { kid.resetForRound(at: redSpots[i % 3]) }
+            for (i, kid) in enemies.enumerated() { kid.resetForRound(at: greenSpots[i % 3]) }
             selectKid(players[1], team: .player)
             if mode == .localVersus { selectKid(enemies[1], team: .enemy) }
         }
@@ -834,7 +839,8 @@ final class GameScene: SKScene {
         case .move:
             kid.moveTarget = walkClamped(target, team: .enemy)
         case .throwBall:
-            guard kid.throwCooldown <= 0 else { return }
+            // a kid still inside its dome can't throw (must be deployed first)
+            guard kid.throwCooldown <= 0, !isSheltered(kid) else { return }
             throwSnowball(from: kid, to: target)
             kid.throwCooldown = (rapidTimers[.enemy] ?? 0) > 0
                 ? GameConfig.fastThrowCooldown
@@ -1177,6 +1183,8 @@ final class GameScene: SKScene {
             },
             redWins: Int8(roundWins[.player] ?? 0),
             greenWins: Int8(roundWins[.enemy] ?? 0),
+            redShelter: Int8(clamp(playerShelter?.hp ?? 0, 0, 127)),
+            greenShelter: Int8(clamp(enemyShelter?.hp ?? 0, 0, 127)),
             events: netEvents
         )
         // events must not be dropped, so those snapshots go reliably

@@ -59,6 +59,28 @@ final class ShelterNode: SKNode {
         return dx * dx + dy * dy < 1
     }
 
+    /// Guest-side mirror: adopt the dome HP from a network snapshot.
+    func applyRemote(hp newHP: Int) {
+        guard newHP != hp else { return }
+        let wasStanding = isStanding
+        hp = newHP
+        let newState = hp <= 0 ? 2 : (hp <= GameConfig.shelterHP / 2 ? 1 : 0)
+        if newState != damageState {
+            damageState = newState
+            sprite.texture = ShelterNode.textures[newState]
+        }
+        if hp <= 0, wasStanding {
+            sprite.run(.group([
+                .fadeAlpha(to: 0.5, duration: 0.4),
+                .scaleY(to: 0.45, duration: 0.4),
+            ]))
+        } else if hp > 0 {
+            sprite.removeAllActions()
+            sprite.yScale = 1
+            sprite.alpha = 1
+        }
+    }
+
     func takeHit() {
         guard isStanding else { return }
         hp -= 1

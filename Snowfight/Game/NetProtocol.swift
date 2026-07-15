@@ -72,5 +72,7 @@ struct GameSnapshot: Codable {
     var powers: [PowerState]
     var redWins: Int8
     var greenWins: Int8
+    var redShelter: Int8   // player dome HP (0 = down)
+    var greenShelter: Int8 // enemy dome HP
     var events: [NetEvent]
 }

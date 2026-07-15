@@ -16,6 +16,8 @@ final class OnlineGuestScene: SKScene {
     private var forts: [FortNode] = []
     private var balls: [UInt32: Snowball] = [:]
     private var powers: [UInt32: PowerUpNode] = [:]
+    private var redShelter: ShelterNode?    // enemy dome (top of guest screen)
+    private var greenShelter: ShelterNode?  // our dome (bottom of guest screen)
 
     // Input (green team only)
     private var activeTouch: UITouch?
@@ -81,6 +83,19 @@ final class OnlineGuestScene: SKScene {
             world.addChild(fort)
             forts.append(fort)
         }
+
+        // Ice domes (flipped): our green dome ends up at the bottom, the enemy
+        // red dome at the top — matching where each team sits on this screen.
+        greenShelter = addShelter(at: flip(CGPoint(x: 0.5, y: 0.87)))
+        redShelter = addShelter(at: flip(CGPoint(x: 0.5, y: 0.13)))
+    }
+
+    private func addShelter(at point: CGPoint) -> ShelterNode {
+        let shelter = ShelterNode()
+        shelter.position = point
+        shelter.zPosition = zForGround(y: point.y) - 0.5
+        world.addChild(shelter)
+        return shelter
     }
 
     private func buildAim() {
@@ -110,7 +125,7 @@ final class OnlineGuestScene: SKScene {
         addChild(scoreLabel)
 
         let hint = SKLabelNode(fontNamed: "Menlo-Bold")
-        hint.text = "You are GREEN  •  drag to throw, tap to move"
+        hint.text = "You are GREEN  •  leave your dome to fight!"
         hint.fontSize = 12
         hint.fontColor = UIColor(red: 0.35, green: 0.45, blue: 0.62, alpha: 1)
         hint.position = CGPoint(x: size.width / 2, y: 30)
@@ -171,6 +186,8 @@ final class OnlineGuestScene: SKScene {
         for (i, hp) in snapshot.forts.enumerated() where i < forts.count {
             forts[i].applyRemote(hp: Int(hp))
         }
+        redShelter?.applyRemote(hp: Int(snapshot.redShelter))
+        greenShelter?.applyRemote(hp: Int(snapshot.greenShelter))
 
         syncBalls(snapshot.balls)
         syncPowers(snapshot.powers)
@@ -315,13 +332,14 @@ final class OnlineGuestScene: SKScene {
         return best
     }
 
-    /// Best-placed living green kid to throw at a target (no range cap), so a
+    /// Best-placed deployed green kid to throw at a target (no range cap), so a
     /// tap on the far enemy side fires from the front-most kid — matching the
-    /// host's autoThrow choice rather than whoever was last selected.
+    /// host's autoThrow choice rather than whoever was last selected. Kids still
+    /// inside the dome are skipped (the host would reject their throw anyway).
     private func bestGreenThrower(towards point: CGPoint) -> Int? {
         var best: Int?
         var bestDistance = CGFloat.greatestFiniteMagnitude
-        for (i, kid) in green.enumerated() where kid.isAlive {
+        for (i, kid) in green.enumerated() where kid.isAlive && !isGreenSheltered(kid) {
             let distance = kid.position.distance(to: point)
             if distance < bestDistance {
                 best = i
@@ -329,6 +347,10 @@ final class OnlineGuestScene: SKScene {
             }
         }
         return best
+    }
+
+    private func isGreenSheltered(_ kid: KidNode) -> Bool {
+        greenShelter?.shelters(point: kid.position) ?? false
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
@@ -392,10 +414,10 @@ final class OnlineGuestScene: SKScene {
         if let index = aimingKid {
             aimingKid = nil
             guard index < green.count else { return }
-            if drag.length >= GameConfig.minDragToThrow {
+            // a kid still in the dome can't throw (the host rejects it)
+            if drag.length >= GameConfig.minDragToThrow, !isGreenSheltered(green[index]) {
                 let target = green[index].position + drag * GameConfig.dragToRangeFactor
-                let host = unflip(target)
-                send(.throwBall, kid: index, target: host)
+                send(.throwBall, kid: index, target: unflip(target))
                 green[index].playThrowAnimation() // instant local feedback
             }
             return
@@ -404,9 +426,13 @@ final class OnlineGuestScene: SKScene {
         if drag.length < 24 {
             // our green team sits at the bottom here; the top half is enemy ground
             if location.y >= size.height * 0.5 {
-                let thrower = bestGreenThrower(towards: location) ?? selected
-                send(.throwBall, kid: thrower, target: unflip(location))
-                if thrower < green.count, green[thrower].isAlive { green[thrower].playThrowAnimation() }
+                // need a deployed kid to throw; if all are still in the dome, nudge
+                if let thrower = bestGreenThrower(towards: location) {
+                    send(.throwBall, kid: thrower, target: unflip(location))
+                    green[thrower].playThrowAnimation()
+                } else {
+                    Sound.shared.play("click", volume: 0.3)
+                }
             } else {
                 send(.move, kid: selected, target: unflip(location))
                 Sound.shared.play("click", volume: 0.3)
