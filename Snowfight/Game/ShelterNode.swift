@@ -36,8 +36,10 @@ final class ShelterNode: SKNode {
     func reset() {
         hp = GameConfig.shelterHP
         damageState = 0
+        sprite.removeAllActions()      // cancel any in-flight collapse animation
         sprite.texture = ShelterNode.textures[0]
         sprite.alpha = 1
+        sprite.yScale = 1              // undo the collapse squash from a prior level
         isHidden = false
     }
 
