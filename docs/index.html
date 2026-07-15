@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Snowfight — Support</title>
+<meta name="description" content="Support and help for Snowfight, the classic snowball battle game for iPhone and iPad.">
+<style>
+  :root {
+    --sky-top: #4a86d0;
+    --sky-bot: #bcd8f4;
+    --snow: #eaf3fb;
+    --ink: #1f3350;
+    --muted: #4b5f7a;
+    --red: #d43632;
+    --green: #3ca63c;
+    --card: #ffffff;
+    --line: #d6e3f0;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: var(--snow);
+    line-height: 1.6;
+  }
+  header {
+    background: linear-gradient(180deg, var(--sky-top), var(--sky-bot));
+    color: #fff;
+    padding: 56px 20px 72px;
+    text-align: center;
+    position: relative;
+    overflow: hidden;
+  }
+  header h1 { margin: 0; font-size: 2.6rem; letter-spacing: .5px; }
+  header p { margin: 10px 0 0; font-size: 1.05rem; opacity: .95; }
+  .flakes { position: absolute; inset: 0; pointer-events: none; }
+  .flake { position: absolute; top: -12px; color: #fff; opacity: .8; animation: fall linear infinite; }
+  @keyframes fall { to { transform: translateY(160px); opacity: 0; } }
+  main {
+    max-width: 760px;
+    margin: -40px auto 0;
+    padding: 0 20px 64px;
+  }
+  .card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px 26px;
+    margin: 18px 0;
+    box-shadow: 0 6px 24px rgba(31, 51, 80, .06);
+  }
+  h2 { margin: 4px 0 12px; font-size: 1.3rem; }
+  a { color: #1666c8; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .btn {
+    display: inline-block; background: var(--red); color: #fff;
+    padding: 12px 22px; border-radius: 12px; font-weight: 700; margin-top: 6px;
+  }
+  .btn:hover { text-decoration: none; opacity: .92; }
+  ul { padding-left: 20px; }
+  li { margin: 6px 0; }
+  .q { font-weight: 700; margin-top: 16px; }
+  .muted { color: var(--muted); }
+  footer { text-align: center; padding: 28px 20px 48px; color: var(--muted); font-size: .9rem; }
+  @media (prefers-color-scheme: dark) {
+    :root { --snow:#0f1826; --ink:#e8eef6; --muted:#9fb2cc; --card:#16233a; --line:#25384f; }
+    body { background: var(--snow); }
+    .btn { color:#fff; }
+  }
+</style>
+</head>
+<body>
+  <header>
+    <div class="flakes" id="flakes"></div>
+    <h1>❄️ Snowfight</h1>
+    <p>The classic snowball battle — support &amp; help</p>
+  </header>
+
+  <main>
+    <div class="card">
+      <h2>Need help?</h2>
+      <p>Have a question, found a bug, or want to suggest a feature? We'd love to hear from you.</p>
+      <!-- ⬇️ REPLACE the email below with your real support email, then save. -->
+      <p><a class="btn" href="mailto:YOUR_EMAIL@example.com?subject=Snowfight%20Support">Email Support</a></p>
+      <p class="muted">We usually reply within a couple of days.</p>
+    </div>
+
+    <div class="card">
+      <h2>How to play</h2>
+      <ul>
+        <li><strong>Move your kids out of the ice dome</strong> to fight — kids inside are safe but can't throw.</li>
+        <li><strong>Tap the enemy side</strong> to throw a snowball there (with aim assist), or drag from a kid to aim manually.</li>
+        <li><strong>Tap your own side</strong> to move the selected kid.</li>
+        <li>Use snow forts for cover, grab power-ups, and smash the other team's dome to flush them out.</li>
+      </ul>
+      <p class="q">Game modes</p>
+      <ul>
+        <li><strong>Solo</strong> — endless levels against the computer.</li>
+        <li><strong>2 Players · 1 Device</strong> — split-screen versus, best of five rounds.</li>
+        <li><strong>Nearby</strong> — two devices on the same Wi‑Fi or Bluetooth. Open <em>Nearby</em> on both and they find each other automatically.</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Frequently asked</h2>
+      <p class="q">Nearby multiplayer isn't finding the other device.</p>
+      <p>Make sure both devices are on the same Wi‑Fi network (or have Bluetooth on), that both have opened <em>Nearby</em>, and that you allowed the local‑network permission prompt the first time. Toggling Airplane Mode off/on or reopening the game usually helps.</p>
+
+      <p class="q">Does the game collect my data?</p>
+      <p>No. Snowfight collects no personal data, has no ads, no accounts, and no in‑app purchases. Your high score and settings stay on your device. See our <a href="privacy.html">Privacy Policy</a>.</p>
+
+      <p class="q">Is there a cost?</p>
+      <p>Snowfight is free to play with no purchases.</p>
+
+      <p class="q">Which devices are supported?</p>
+      <p>iPhone and iPad running iOS 16 or later. The game plays in landscape.</p>
+    </div>
+
+    <div class="card">
+      <h2>Privacy</h2>
+      <p>Snowfight does not collect, track, or share any data. Read the full <a href="privacy.html">Privacy Policy</a>.</p>
+    </div>
+  </main>
+
+  <footer>
+    © 2026 Snowfight. All rights reserved.
+  </footer>
+
+  <script>
+    // lightweight decorative snow
+    const wrap = document.getElementById('flakes');
+    for (let i = 0; i < 24; i++) {
+      const f = document.createElement('div');
+      f.className = 'flake';
+      f.textContent = '❄';
+      f.style.left = Math.random() * 100 + '%';
+      f.style.fontSize = (8 + Math.random() * 14) + 'px';
+      f.style.animationDuration = (3 + Math.random() * 4) + 's';
+      f.style.animationDelay = (Math.random() * 4) + 's';
+      wrap.appendChild(f);
+    }
+  </script>
+</body>
+</html>
