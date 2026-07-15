@@ -41,6 +41,10 @@ enum GameConfig {
     // Forts
     static let fortHP = 6
 
+    // Ice-dome shelter (solo mode): kids start safe inside and deploy out; the
+    // dome blocks snowballs and shelters the kids in it until it is smashed.
+    static let shelterHP = 14
+
     // Power-ups
     static let powerUpInterval: ClosedRange<CGFloat> = 11...17
     static let powerUpLifetime: CGFloat = 10

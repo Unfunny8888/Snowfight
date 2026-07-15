@@ -196,6 +196,90 @@ enum PixelArt {
         return emitter
     }
 
+    // MARK: - Ice dome shelter
+
+    /// Igloo-style snow dome with three damage states (0 intact … 2 crumbling).
+    static func domeTexture(damage: Int) -> SKTexture {
+        let w: CGFloat = 260, h: CGFloat = 132
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 2
+        let image = UIGraphicsImageRenderer(size: CGSize(width: w, height: h), format: format).image { ctx in
+            let cg = ctx.cgContext
+            let ground = h - 24
+
+            // drop shadow on the snow
+            snowShadow.withAlphaComponent(0.4).setFill()
+            cg.fillEllipse(in: CGRect(x: 12, y: ground - 6, width: w - 24, height: 30))
+
+            // dome body (a tall ellipse rising from the ground line)
+            cg.saveGState()
+            cg.clip(to: CGRect(x: 0, y: 0, width: w, height: ground))
+            snowWhite.setFill()
+            cg.fillEllipse(in: CGRect(x: 16, y: 14, width: w - 32, height: (ground - 14) * 2))
+            // soft interior shading for volume
+            snowShadow.withAlphaComponent(0.30).setFill()
+            cg.fillEllipse(in: CGRect(x: 44, y: 40, width: w - 88, height: (ground - 40) * 2))
+            snowWhite.setFill()
+            cg.fillEllipse(in: CGRect(x: 34, y: 22, width: w - 120, height: (ground - 30) * 2))
+            cg.restoreGState()
+
+            // igloo block seams
+            let seam = UIColor(red: 0.66, green: 0.78, blue: 0.90, alpha: 0.55)
+            seam.setStroke()
+            cg.setLineWidth(2)
+            for ry: CGFloat in [0.5, 0.78] {
+                let rr = (ground - 14) * ry
+                cg.strokeEllipse(in: CGRect(x: w/2 - (w/2 - 20) * ry, y: ground - rr,
+                                            width: (w - 40) * ry, height: rr * 2))
+            }
+            for dx: CGFloat in [-70, -24, 24, 70] {
+                cg.move(to: CGPoint(x: w/2 + dx, y: ground))
+                cg.addLine(to: CGPoint(x: w/2 + dx * 0.5, y: 30))
+                cg.strokePath()
+            }
+
+            // entrance arch, facing the field
+            let dark = UIColor(red: 0.40, green: 0.50, blue: 0.64, alpha: 1)
+            dark.setFill()
+            let ew: CGFloat = 78
+            let ex = (w - ew) / 2
+            cg.fill(CGRect(x: ex, y: ground - 46, width: ew, height: 46))
+            cg.fillEllipse(in: CGRect(x: ex, y: ground - 46 - 22, width: ew, height: 44))
+            UIColor(red: 0.30, green: 0.39, blue: 0.52, alpha: 1).setFill()
+            cg.fillEllipse(in: CGRect(x: ex + 10, y: ground - 40 - 14, width: ew - 20, height: 30))
+
+            // sheen
+            snowWhite.withAlphaComponent(0.7).setFill()
+            cg.fillEllipse(in: CGRect(x: 52, y: 34, width: 60, height: 40))
+
+            // damage: cracks and knocked-out blocks
+            if damage > 0 {
+                let crack = UIColor(red: 0.55, green: 0.66, blue: 0.80, alpha: 0.9)
+                crack.setStroke()
+                cg.setLineWidth(3)
+                let cracks = damage * 4
+                for i in 0..<cracks {
+                    let sx = 40 + CGFloat((i * 53) % Int(w - 80))
+                    let sy = 30 + CGFloat((i * 29) % Int(ground - 50))
+                    cg.move(to: CGPoint(x: sx, y: sy))
+                    cg.addLine(to: CGPoint(x: sx + 14, y: sy + 20))
+                    cg.addLine(to: CGPoint(x: sx + 4, y: sy + 34))
+                    cg.strokePath()
+                }
+            }
+            if damage > 1 {
+                // blow out a couple of blocks from the top
+                cg.setBlendMode(.clear)
+                cg.fillEllipse(in: CGRect(x: w * 0.30, y: 26, width: 46, height: 40))
+                cg.fillEllipse(in: CGRect(x: w * 0.58, y: 44, width: 40, height: 34))
+                cg.setBlendMode(.normal)
+            }
+        }
+        let texture = SKTexture(image: image)
+        texture.filteringMode = .nearest
+        return texture
+    }
+
     // MARK: - Ground
 
     /// Subtle speckled snow texture stretched over the whole field.

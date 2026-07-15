@@ -40,6 +40,9 @@ final class GameScene: SKScene {
     private var forts: [FortNode] = []
     private var snowballs: [Snowball] = []
     private var powerUps: [PowerUpNode] = []
+    // Ice-dome shelters (solo mode only)
+    private var playerShelter: ShelterNode?
+    private var enemyShelter: ShelterNode?
 
     // Input
     private var inputs: [KidNode.Team: TeamInput] = [:]
@@ -99,7 +102,7 @@ final class GameScene: SKScene {
         switch mode {
         case .solo:
             startLevel(1)
-            showHint("TAP the top to throw there  •  TAP your side to move")
+            showHint("Move your kids OUT of the dome to fight  •  smash theirs!", holdFor: 8)
         case .localVersus:
             startRound()
             showHint("Each player owns one half — drag from your kids to throw")
@@ -129,6 +132,21 @@ final class GameScene: SKScene {
             world.addChild(fort)
             forts.append(fort)
         }
+
+        // Solo: each team gets a destructible ice-dome shelter to deploy from.
+        if mode == .solo {
+            playerShelter = addShelter(at: CGPoint(x: size.width * 0.5, y: size.height * 0.13))
+            enemyShelter = addShelter(at: CGPoint(x: size.width * 0.5, y: size.height * 0.87))
+        }
+    }
+
+    private func addShelter(at point: CGPoint) -> ShelterNode {
+        let shelter = ShelterNode()
+        shelter.position = point
+        // just behind the kids standing at its mouth
+        shelter.zPosition = zForGround(y: point.y) - 0.5
+        world.addChild(shelter)
+        return shelter
     }
 
     private func buildAimHelpers() {
@@ -300,6 +318,16 @@ final class GameScene: SKScene {
         [0.25, 0.5, 0.75].map { CGPoint(x: size.width * $0, y: size.height * 0.84) }
     }
 
+    /// Solo spawns are clustered inside each team's ice dome (so the kids start
+    /// sheltered). Extra enemies stack onto the three mouth positions.
+    private var soloRedSpawns: [CGPoint] {
+        [0.42, 0.5, 0.58].map { CGPoint(x: size.width * $0, y: size.height * 0.13) }
+    }
+
+    private var soloGreenSpawns: [CGPoint] {
+        [0.42, 0.5, 0.58].map { CGPoint(x: size.width * $0, y: size.height * 0.87) }
+    }
+
     private func clearFieldObjects() {
         for ball in snowballs { ball.removeFromScene() }
         snowballs = []
@@ -329,9 +357,12 @@ final class GameScene: SKScene {
         state = .playing
         banner.isHidden = true
         clearFieldObjects()
+        playerShelter?.reset()
+        enemyShelter?.reset()
 
+        let redSpots = soloRedSpawns
         if players.isEmpty {
-            for spawn in redSpawns {
+            for spawn in redSpots {
                 let kid = KidNode(team: .player, hp: GameConfig.maxHP)
                 kid.position = spawn
                 world.addChild(kid)
@@ -339,9 +370,11 @@ final class GameScene: SKScene {
             }
             selectKid(players[1], team: .player)
         } else {
+            // survivors pull back into the shelter to start the next wave
             for (i, kid) in players.enumerated() {
                 kid.reviveForNextLevel()
-                kid.moveTarget = redSpawns[i % redSpawns.count]
+                kid.position = redSpots[i % redSpots.count]
+                kid.moveTarget = nil
             }
             let input = inputs[.player]
             if input?.selected == nil || input?.selected?.isAlive != true {
@@ -349,23 +382,17 @@ final class GameScene: SKScene {
             }
         }
 
-        // AI enemies march in from beyond the top edge.
+        // AI enemies start inside their dome, then deploy out to fight.
         for enemy in enemies { enemy.removeFromParent() }
         enemies = []
         let count = GameConfig.enemyCount(level: level)
+        let greenSpots = soloGreenSpawns
         for i in 0..<count {
             let kid = KidNode(team: .enemy, hp: GameConfig.enemyHP(level: level))
             kid.moveSpeed = GameConfig.enemyMoveSpeed(level: level)
-            let fx = CGFloat(i + 1) / CGFloat(count + 1)
-            kid.position = CGPoint(
-                x: size.width * fx + CGFloat.random(in: -20...20),
-                y: size.height + 40 + CGFloat.random(in: 0...60)
-            )
-            kid.moveTarget = CGPoint(
-                x: size.width * fx,
-                y: size.height * CGFloat.random(in: 0.68...0.86)
-            )
-            kid.aiThrowTimer = CGFloat.random(in: 1.0...2.5)
+            kid.position = greenSpots[i % greenSpots.count] + CGPoint(x: CGFloat.random(in: -16...16), y: CGFloat.random(in: -10...10))
+            kid.moveTarget = enemyDeployTarget()   // walk out of the dome into the field
+            kid.aiThrowTimer = CGFloat.random(in: 1.4...3.0) + CGFloat(i) * 0.3
             kid.aiWanderTimer = CGFloat.random(in: 2...5)
             world.addChild(kid)
             enemies.append(kid)
@@ -552,6 +579,36 @@ final class GameScene: SKScene {
         mode == .solo && kid.team == .enemy
     }
 
+    /// True while a kid stands inside its team's intact ice dome — immune to
+    /// snowballs and unable to throw until it steps out (or the dome is smashed).
+    private func isSheltered(_ kid: KidNode) -> Bool {
+        let dome = kid.team == .player ? playerShelter : enemyShelter
+        return dome?.shelters(point: kid.position) ?? false
+    }
+
+    /// A field spot for an enemy to deploy to that is guaranteed to clear its
+    /// dome's footprint (derived from the dome geometry, not a screen fraction,
+    /// so it works on any screen height — otherwise enemies could get stuck
+    /// sheltered and the wave would never end).
+    private func enemyDeployTarget() -> CGPoint {
+        let dome = enemyShelter
+        let frontY = (dome?.position.y ?? size.height * 0.85) - (dome?.shelterRY ?? 48) - 44
+        return CGPoint(
+            x: size.width * CGFloat.random(in: 0.15...0.85),
+            y: clamp(frontY, size.height * 0.55, size.height * 0.72)
+        )
+    }
+
+    /// Keeps a deployed enemy in its playing band — above the midline, and out
+    /// of its own dome so it can't accidentally re-shelter and become unkillable.
+    private func clampEnemyToField(_ point: CGPoint) -> CGPoint {
+        let maxY = enemyShelter.map { $0.position.y - $0.shelterRY - 8 } ?? size.height * 0.74
+        return CGPoint(
+            x: clamp(point.x, 24, size.width - 24),
+            y: clamp(point.y, size.height * 0.52, maxY)
+        )
+    }
+
     private func throwSnowball(from kid: KidNode, to rawTarget: CGPoint) {
         var target = fieldClamped(rawTarget)
 
@@ -692,7 +749,7 @@ final class GameScene: SKScene {
 
             if let kid = input.aimingKid {
                 input.aimingKid = nil
-                if drag.length >= GameConfig.minDragToThrow, kid.canAct {
+                if drag.length >= GameConfig.minDragToThrow, kid.canAct, !isSheltered(kid) {
                     if kid.throwCooldown <= 0 {
                         throwSnowball(from: kid, to: kid.position + drag * GameConfig.dragToRangeFactor)
                         kid.throwCooldown = (rapidTimers[team] ?? 0) > 0
@@ -738,7 +795,8 @@ final class GameScene: SKScene {
     /// Tap-to-attack: the readiest kid nearest the target throws at it (with
     /// aim assist). This is the easy way to attack — no precise drag needed.
     private func autoThrow(team: KidNode.Team, at point: CGPoint) {
-        let ready = kids(of: team).filter { $0.canAct && $0.throwCooldown <= 0 }
+        // sheltered kids must step out of the dome before they can fight
+        let ready = kids(of: team).filter { $0.canAct && $0.throwCooldown <= 0 && !isSheltered($0) }
         guard let thrower = ready.min(by: {
             $0.position.distance(to: point) < $1.position.distance(to: point)
         }) else {
@@ -842,19 +900,26 @@ final class GameScene: SKScene {
     private func updateEnemyAI(_ kid: KidNode, deltaTime dt: CGFloat) {
         guard kid.canAct else { return }
 
+        // While still in the dome the kid just walks its deploy target outward;
+        // it can't throw or re-plan until it has stepped into the field.
+        if isSheltered(kid) {
+            if kid.moveTarget == nil { kid.moveTarget = enemyDeployTarget() }
+            return
+        }
+
         kid.aiWanderTimer -= dt
         if kid.aiWanderTimer <= 0 {
             kid.aiWanderTimer = CGFloat.random(in: 2.5...5.5)
             if Bool.random(), let fort = forts.filter({ $0.isStanding && $0.position.y > size.height * 0.5 }).randomElement() {
-                kid.moveTarget = fieldClamped(CGPoint(
+                kid.moveTarget = clampEnemyToField(CGPoint(
                     x: fort.position.x + CGFloat.random(in: -70...70),
                     y: fort.position.y + CGFloat.random(in: 10...60)
                 ))
             } else {
-                kid.moveTarget = CGPoint(
+                kid.moveTarget = clampEnemyToField(CGPoint(
                     x: CGFloat.random(in: size.width * 0.1...size.width * 0.9),
-                    y: CGFloat.random(in: size.height * 0.60...size.height * 0.88)
-                )
+                    y: CGFloat.random(in: size.height * 0.58...size.height * 0.80)
+                ))
             }
         }
 
@@ -901,6 +966,9 @@ final class GameScene: SKScene {
             if !consumed, ball.height < 26 {
                 consumed = checkFortHit(ball)
             }
+            if !consumed, ball.height < 44 {
+                consumed = checkShelterHit(ball)   // domes are tall, so a higher gate
+            }
             if consumed {
                 finished.insert(ObjectIdentifier(ball))
                 continue
@@ -924,7 +992,7 @@ final class GameScene: SKScene {
 
     private func checkKidHit(_ ball: Snowball) -> Bool {
         let victims = ball.team == .player ? enemies : players
-        for kid in victims where kid.isAlive && kid.knockdownTimer <= 0 {
+        for kid in victims where kid.isAlive && kid.knockdownTimer <= 0 && !isSheltered(kid) {
             guard ball.ground.distance(to: kid.position) < ball.hitRadius else { continue }
 
             let knockedOut = kid.takeHit(damage: ball.damage)
@@ -961,6 +1029,17 @@ final class GameScene: SKScene {
             return true
         }
         return false
+    }
+
+    /// A snowball smashing an ice dome chips it down (and eventually exposes the
+    /// kids still inside). A team's own balls pass over their own dome.
+    private func checkShelterHit(_ ball: Snowball) -> Bool {
+        let targetDome = ball.team == .player ? enemyShelter : playerShelter
+        guard let dome = targetDome, dome.blocks(point: ball.ground) else { return false }
+        dome.takeHit()
+        splat(at: ball.ground + CGPoint(x: 0, y: 20), big: true)
+        Sound.shared.play("splat", volume: 0.6)
+        return true
     }
 
     private func splat(at point: CGPoint, big: Bool) {
