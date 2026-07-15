@@ -222,7 +222,7 @@ final class GameScene: SKScene {
     }
 
     private func buildPauseOverlay() {
-        let dim = SKSpriteNode(color: UIColor.black.withAlphaComponent(0.45), size: size)
+        let dim = SKSpriteNode(color: UIColor.black.withAlphaComponent(0.5), size: size)
         dim.anchorPoint = .zero
         pauseOverlay.addChild(dim)
 
@@ -230,19 +230,37 @@ final class GameScene: SKScene {
         title.text = "PAUSED"
         title.fontSize = 34
         title.fontColor = .white
-        title.position = CGPoint(x: size.width / 2, y: size.height * 0.58)
+        title.position = CGPoint(x: size.width / 2, y: size.height * 0.68)
         pauseOverlay.addChild(title)
 
-        let resume = SKLabelNode(fontNamed: "Menlo-Bold")
-        resume.text = "TAP TO RESUME"
-        resume.fontSize = 16
-        resume.fontColor = UIColor(white: 0.85, alpha: 1)
-        resume.position = CGPoint(x: size.width / 2, y: size.height * 0.48)
-        pauseOverlay.addChild(resume)
+        addPauseButton(name: "resume", text: "RESUME",
+                       color: UIColor(red: 0.24, green: 0.55, blue: 0.32, alpha: 1),
+                       at: CGPoint(x: size.width / 2, y: size.height * 0.46))
+        addPauseButton(name: "exit", text: "EXIT TO MENU",
+                       color: UIColor(red: 0.72, green: 0.28, blue: 0.26, alpha: 1),
+                       at: CGPoint(x: size.width / 2, y: size.height * 0.26))
 
         pauseOverlay.zPosition = 1200
         pauseOverlay.isHidden = true
         addChild(pauseOverlay)
+    }
+
+    private func addPauseButton(name: String, text: String, color: UIColor, at position: CGPoint) {
+        let button = SKShapeNode(rectOf: CGSize(width: 268, height: 52), cornerRadius: 13)
+        button.fillColor = color
+        button.strokeColor = .white
+        button.lineWidth = 2
+        button.position = position
+        button.name = name
+        pauseOverlay.addChild(button)
+
+        let label = SKLabelNode(fontNamed: "Menlo-Bold")
+        label.text = text
+        label.fontSize = 20
+        label.fontColor = .white
+        label.verticalAlignmentMode = .center
+        label.name = name
+        button.addChild(label)
     }
 
     private func showHint(_ text: String, holdFor: TimeInterval = 6, fade: TimeInterval = 1) {
@@ -581,7 +599,15 @@ final class GameScene: SKScene {
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
         switch state {
         case .paused:
-            togglePause()
+            // EXIT quits to the menu; tapping the resume button (or anywhere
+            // else on the dimmed overlay) resumes play.
+            if let touch = touches.first,
+               nodes(at: touch.location(in: self)).contains(where: { $0.name == "exit" }) {
+                Sound.shared.play("click", volume: 0.5)
+                exitToMenu()
+            } else {
+                togglePause()
+            }
             return
         case .roundBreak:
             Sound.shared.play("click", volume: 0.5)
