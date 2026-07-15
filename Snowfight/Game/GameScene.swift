@@ -309,14 +309,6 @@ final class GameScene: SKScene {
 
     // MARK: - Spawn positions
 
-    private var redSpawns: [CGPoint] {
-        [0.25, 0.5, 0.75].map { CGPoint(x: size.width * $0, y: size.height * 0.16) }
-    }
-
-    private var greenSpawns: [CGPoint] {
-        [0.25, 0.5, 0.75].map { CGPoint(x: size.width * $0, y: size.height * 0.84) }
-    }
-
     /// Dome spawns are clustered inside each team's ice dome (so the kids start
     /// sheltered). Extra solo enemies stack onto the three mouth positions.
     private var domeRedSpawns: [CGPoint] {
