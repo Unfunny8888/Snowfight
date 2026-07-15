@@ -82,10 +82,15 @@ final class GameScene: SKScene {
         backgroundColor = PixelArt.snowGround
         Sound.warmUp()
 
+        // SpriteKit views start with multi-touch OFF, so without this the two
+        // same-device players would take turns instead of playing at once.
+        view.isMultipleTouchEnabled = true
+
         addChild(world)
         buildField()
         buildAimHelpers()
         buildHUD()
+        buildVersusDivider()
         addChild(PixelArt.snowfallEmitter(sceneSize: size, birthRate: 8))
 
         if mode.isOnline {
@@ -105,7 +110,7 @@ final class GameScene: SKScene {
             showHint("Move your kids OUT of the dome to fight  •  smash theirs!", holdFor: 8)
         case .localVersus:
             startRound()
-            showHint("Move your kids OUT of your dome, then drag to throw!", holdFor: 8)
+            showHint("Both play at once! Leave your dome, drag from a kid to throw", holdFor: 9)
         case .hostOnline:
             startRound()
             showHint("You are RED — leave your dome to fight, and smash theirs!", holdFor: 8)
@@ -260,6 +265,41 @@ final class GameScene: SKScene {
         pauseOverlay.zPosition = 1200
         pauseOverlay.isHidden = true
         addChild(pauseOverlay)
+    }
+
+    /// Same-device 2-player: a dashed center line and side tags so each player
+    /// knows which half of the screen is theirs.
+    private func buildVersusDivider() {
+        guard mode == .localVersus else { return }
+        let midY = size.height / 2
+
+        let path = CGMutablePath()
+        var x: CGFloat = 8
+        while x < size.width - 8 {
+            path.move(to: CGPoint(x: x, y: midY))
+            path.addLine(to: CGPoint(x: min(x + 26, size.width - 8), y: midY))
+            x += 46
+        }
+        let line = SKShapeNode(path: path)
+        line.strokeColor = UIColor(white: 1.0, alpha: 0.55)
+        line.lineWidth = 4
+        line.lineCap = .round
+        line.zPosition = 700
+        addChild(line)
+
+        func tag(_ text: String, color: UIColor, above: Bool) {
+            let label = SKLabelNode(fontNamed: "Menlo-Bold")
+            label.text = text
+            label.fontSize = 13
+            label.fontColor = color.withAlphaComponent(0.85)
+            label.horizontalAlignmentMode = .right
+            label.verticalAlignmentMode = above ? .bottom : .top
+            label.position = CGPoint(x: size.width - 16, y: midY + (above ? 8 : -8))
+            label.zPosition = 700
+            addChild(label)
+        }
+        tag("GREEN ▲", color: UIColor(red: 0.24, green: 0.6, blue: 0.28, alpha: 1), above: true)
+        tag("RED ▼", color: UIColor(red: 0.82, green: 0.3, blue: 0.28, alpha: 1), above: false)
     }
 
     private func addPauseButton(name: String, text: String, color: UIColor, at position: CGPoint) {
